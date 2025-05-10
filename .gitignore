@@ -1,0 +1,41 @@
+# File di sistema
+.DS_Store
+Thumbs.db
+
+# Configurazione IDE (Android Studio)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Build
+/build/
+*/build/
+
+# Gradle
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local properties (contiene chiavi e path locali)
+local.properties
+
+# File generati dal compilatore
+*.log
+*.tmp
+
+# NDK / JNI
+.externalNativeBuild/
+.cxx/
+
+# Coverage e test
+*.ec
+coverage/
+
+# File di cache e performance
+*.hprof
+captures/
+
+# Altri
+*.apk
+*.aar
+output.json
