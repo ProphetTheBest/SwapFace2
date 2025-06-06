@@ -31,8 +31,8 @@ data class PhotoEditorUiState(
     val compositeBitmap: Bitmap? = null,
     // Brush/Remove
     val isBrushRemoveMode: Boolean = false,
-    val brushPathList: List<Pair<List<Offset>, Float>> = emptyList(), // PATCHED
-    val redoStack: List<Pair<List<Offset>, Float>> = emptyList(),     // PATCHED
+    val brushPathList: List<Pair<List<Offset>, Float>> = emptyList(),
+    val redoStack: List<Pair<List<Offset>, Float>> = emptyList(),
     val currentBrushSize: Float = 40f,
     // Brush overlay/canvas size and offsets
     val brushCanvasSize: IntSize = IntSize(1, 1),
@@ -224,7 +224,6 @@ class PhotoEditorViewModel : ViewModel() {
     fun enableBrushRemove() = _uiState.update { it.copy(isBrushRemoveMode = true, showBrushSheet = true) }
     fun disableBrushRemove() = _uiState.update { it.copy(isBrushRemoveMode = false, showBrushSheet = false, brushPathList = emptyList(), redoStack = emptyList()) }
 
-    // PATCHED: Riceve lista di punti
     fun addBrushPath(pointList: List<Offset>, thickness: Float) {
         val current = _uiState.value
         _uiState.update {

@@ -12,6 +12,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import com.example.faceswapapp.viewmodel.PhotoEditorViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.positionInRoot
 
 @Composable
 fun PhotoEditorScreen(
@@ -35,6 +41,10 @@ fun PhotoEditorScreen(
             editorViewModel.clearSnackbar()
         }
     }
+
+    // Traccia la posizione e la dimensione effettiva dell'immagine visualizzata
+    var imageOffset by remember { mutableStateOf(Offset.Zero) }
+    var imageSize by remember { mutableStateOf(IntSize(1, 1)) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -61,18 +71,23 @@ fun PhotoEditorScreen(
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
 
-            // Immagine principale (bitmap, composite, o person)
             val compositeBitmap = state.compositeBitmap
             val bitmap = state.bitmap
+
             if (!state.isLoading && !state.isSegmenting) {
                 when {
                     compositeBitmap != null -> {
                         Image(
                             bitmap = compositeBitmap.asImageBitmap(),
                             contentDescription = null,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .onGloballyPositioned { coordinates: LayoutCoordinates ->
+                                    imageOffset = coordinates.positionInRoot()
+                                    imageSize = coordinates.size
+                                },
+                            contentScale = ContentScale.Fit // PATCH: nessun taglio, mostra sempre tutta l'immagine
                         )
-                        // Applica/Annulla compositing
                         Column(
                             Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
@@ -90,7 +105,13 @@ fun PhotoEditorScreen(
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = null,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .onGloballyPositioned { coordinates: LayoutCoordinates ->
+                                    imageOffset = coordinates.positionInRoot()
+                                    imageSize = coordinates.size
+                                },
+                            contentScale = ContentScale.Fit // PATCH: nessun taglio, mostra sempre tutta l'immagine
                         )
                     }
                     else -> {
@@ -103,11 +124,15 @@ fun PhotoEditorScreen(
             }
 
             // Overlay Crop
-            if (state.isCropMode && bitmap != null) {
+            if (state.isCropMode && bitmap != null && imageSize.width > 0 && imageSize.height > 0) {
+                LaunchedEffect(imageSize) {
+                    editorViewModel.updateBoxSize(imageSize)
+                }
                 MovableCropBox(
-                    boxSize = state.boxSize,
+                    boxSize = imageSize,
                     cropRect = state.cropRect,
-                    onCropRectChange = { editorViewModel.updateCropRect(it) }
+                    imageOffset = imageOffset,
+                    onCropRectFinal = { editorViewModel.updateCropRect(it) }
                 )
                 Button(
                     onClick = { editorViewModel.applyCrop() },

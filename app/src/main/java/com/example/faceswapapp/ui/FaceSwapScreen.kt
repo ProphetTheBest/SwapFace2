@@ -298,11 +298,31 @@ fun UnifiedScreen(
                         }
                         val targetLandmarksPoints = FaceSwapUtils.offsetsToPoints(targetLandmarks468)
                         val sourceLandmarksPoints = FaceSwapUtils.offsetsToPoints(scaledSourceLandmarks)
-                        val triangles = FaceSwapUtils.calculateDelaunayTriangles(
-                            baseBitmap.width, baseBitmap.height, targetLandmarksPoints
-                        )
+
+                        // PATCH: Filtra punti fuori dall'immagine per evitare crash OpenCV
+                        val imgW = baseBitmap.width.toDouble()
+                        val imgH = baseBitmap.height.toDouble()
+                        val filteredTargetPoints = targetLandmarksPoints.filter {
+                            it.x.toDouble() in 0.0..imgW && it.y.toDouble() in 0.0..imgH
+                        }
+                        if (filteredTargetPoints.size < 3) {
+                            errorMessage = "Landmark non validi per la triangolazione. Riprova con un'altra immagine o assicurati che il volto sia ben visibile."
+                            isProcessing = false
+                            bitmapVersion++
+                            return@launch
+                        }
+                        val triangles = try {
+                            FaceSwapUtils.calculateDelaunayTriangles(baseBitmap.width, baseBitmap.height, filteredTargetPoints)
+                        } catch (e: Exception) {
+                            errorMessage = "Errore durante la triangolazione del volto (OpenCV): landmark fuori range. Prova con un'altra immagine."
+                            isProcessing = false
+                            bitmapVersion++
+                            return@launch
+                        }
+
+                        // PATCH: Conversione esplicita a Double!
                         val hullPoints = org.opencv.core.MatOfPoint(
-                            *targetLandmarksPoints.map { org.opencv.core.Point(it.x.toDouble(), it.y.toDouble()) }.toTypedArray()
+                            *filteredTargetPoints.map { org.opencv.core.Point(it.x.toDouble(), it.y.toDouble()) }.toTypedArray()
                         )
                         val hullIndices = org.opencv.core.MatOfInt()
                         org.opencv.imgproc.Imgproc.convexHull(hullPoints, hullIndices)
@@ -317,7 +337,7 @@ fun UnifiedScreen(
                                 source = faceBitmap,
                                 dest = baseBitmap,
                                 sourceLandmarks = sourceLandmarksPoints,
-                                destLandmarks = targetLandmarksPoints,
+                                destLandmarks = filteredTargetPoints,
                                 triangles = triangles,
                                 maskHull = hullMat,
                                 context = context
@@ -413,7 +433,7 @@ fun UnifiedScreen(
                 ) {
                     BoxWithConstraints(
                         modifier = Modifier
-                            .size(300.dp)
+                            .size(380.dp)
                             .shadow(12.dp, RoundedCornerShape(32.dp))
                             .background(Color.White, RoundedCornerShape(32.dp))
                     ) {
@@ -459,7 +479,8 @@ fun UnifiedScreen(
                                         text = errorMessage ?: "Seleziona un'immagine per iniziare",
                                         color = MaterialTheme.colorScheme.error,
                                         modifier = Modifier.fillMaxWidth(),
-                                        textAlign = TextAlign.Center
+                                        textAlign = TextAlign.Center,
+                                        style = MaterialTheme.typography.headlineSmall
                                     )
                                 }
                             }
@@ -575,6 +596,7 @@ fun UnifiedScreen(
                                 Modifier
                                     .padding(14.dp)
                                     .widthIn(min = 340.dp, max = 380.dp)
+                                    .verticalScroll(rememberScrollState()), // PATCH: scrollabile!
                             ) {
                                 Row(
                                     Modifier
@@ -599,53 +621,47 @@ fun UnifiedScreen(
                                     }
                                 }
                                 Divider(Modifier.padding(vertical = 6.dp))
-                                Column(
-                                    Modifier
-                                        .verticalScroll(rememberScrollState())
-                                        .weight(1f, fill = false),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                                        Text("X:", Modifier.width(32.dp))
-                                        Slider(
-                                            value = selectedSticker.x,
-                                            onValueChange = { updateSelectedSticker(x = it) },
-                                            valueRange = -200f..200f,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                                        )
-                                        Text(selectedSticker.x.toInt().toString(), Modifier.width(42.dp), textAlign = TextAlign.End)
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                                        Text("Y:", Modifier.width(32.dp))
-                                        Slider(
-                                            value = selectedSticker.y,
-                                            onValueChange = { updateSelectedSticker(y = it) },
-                                            valueRange = -200f..200f,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                                        )
-                                        Text(selectedSticker.y.toInt().toString(), Modifier.width(42.dp), textAlign = TextAlign.End)
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                                        Text("Scala", Modifier.width(48.dp))
-                                        Slider(
-                                            value = selectedSticker.scale,
-                                            onValueChange = { updateSelectedSticker(scale = it) },
-                                            valueRange = 0.2f..3.0f,
-                                            steps = 18,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                                        )
-                                        Text("${"%.2f".format(selectedSticker.scale)}x", Modifier.width(48.dp), textAlign = TextAlign.End)
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                                        Text("Rot:", Modifier.width(48.dp))
-                                        Slider(
-                                            value = selectedSticker.rotation,
-                                            onValueChange = { updateSelectedSticker(rot = it) },
-                                            valueRange = -180f..180f,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                                        )
-                                        Text("${selectedSticker.rotation.toInt()}°", Modifier.width(48.dp), textAlign = TextAlign.End)
-                                    }
+                                // PATCH: niente .weight(1f) qui!
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                                    Text("X:", Modifier.width(32.dp))
+                                    Slider(
+                                        value = selectedSticker.x,
+                                        onValueChange = { updateSelectedSticker(x = it) },
+                                        valueRange = -200f..200f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                                    )
+                                    Text(selectedSticker.x.toInt().toString(), Modifier.width(42.dp), textAlign = TextAlign.End)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                                    Text("Y:", Modifier.width(32.dp))
+                                    Slider(
+                                        value = selectedSticker.y,
+                                        onValueChange = { updateSelectedSticker(y = it) },
+                                        valueRange = -200f..200f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                                    )
+                                    Text(selectedSticker.y.toInt().toString(), Modifier.width(42.dp), textAlign = TextAlign.End)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                                    Text("Scala", Modifier.width(48.dp))
+                                    Slider(
+                                        value = selectedSticker.scale,
+                                        onValueChange = { updateSelectedSticker(scale = it) },
+                                        valueRange = 0.2f..3.0f,
+                                        steps = 18,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                                    )
+                                    Text("${"%.2f".format(selectedSticker.scale)}x", Modifier.width(48.dp), textAlign = TextAlign.End)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                                    Text("Rot:", Modifier.width(48.dp))
+                                    Slider(
+                                        value = selectedSticker.rotation,
+                                        onValueChange = { updateSelectedSticker(rot = it) },
+                                        valueRange = -180f..180f,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                                    )
+                                    Text("${selectedSticker.rotation.toInt()}°", Modifier.width(48.dp), textAlign = TextAlign.End)
                                 }
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -871,8 +887,6 @@ fun UnifiedScreen(
 }
 
 // --- Composable custom per bottone gradiente chic ---
-// Sostituisci SOLO questo composable alla fine del file
-
 @Composable
 fun GradientButton(
     text: String,
