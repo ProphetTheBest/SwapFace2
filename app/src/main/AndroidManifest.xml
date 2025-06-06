@@ -24,5 +24,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- PhotoEditorActivity registrata per l'editor immagini -->
+        <activity
+            android:name=".ui.PhotoEditorActivity"
+            android:exported="false" />
     </application>
 </manifest>
