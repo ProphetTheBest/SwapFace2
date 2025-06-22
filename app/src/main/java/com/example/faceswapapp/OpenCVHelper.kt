@@ -30,7 +30,6 @@ object OpenCVHelper {
         // Converti src in Mat
         val srcMat0 = Mat()
         Utils.bitmapToMat(src, srcMat0)
-        // Converti in 3 canali BGR se necessario
         val srcMat = if (srcMat0.channels() == 4) {
             val bgr = Mat()
             Imgproc.cvtColor(srcMat0, bgr, Imgproc.COLOR_RGBA2BGR)
@@ -48,7 +47,6 @@ object OpenCVHelper {
         // Converti mask in Mat
         val maskMat0 = Mat()
         Utils.bitmapToMat(mask, maskMat0)
-        // Assicurati che la maschera sia single-channel, 8-bit
         val maskMatGray = if (maskMat0.channels() > 1) {
             val singleChannel = Mat()
             Imgproc.cvtColor(maskMat0, singleChannel, Imgproc.COLOR_BGR2GRAY)
@@ -59,8 +57,16 @@ object OpenCVHelper {
         }
         val maskMat8u = Mat()
         maskMatGray.convertTo(maskMat8u, CvType.CV_8UC1)
-        // PATCH: forza la maschera binaria
         Imgproc.threshold(maskMat8u, maskMat8u, 127.0, 255.0, Imgproc.THRESH_BINARY)
+
+        // DILATAZIONE: migliora risultati dell'inpainting
+        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, org.opencv.core.Size(5.0, 5.0))
+        Imgproc.dilate(maskMat8u, maskMat8u, kernel)
+        kernel.release()
+
+        // (facoltativo) Blur leggero per i bordi maschera:
+        // Imgproc.GaussianBlur(maskMat8u, maskMat8u, org.opencv.core.Size(5.0, 5.0), 0.0)
+
         // DEBUG: stampa la somma dei pixel della maschera
         Log.d("OpenCV", "maskMat8u sum: " + org.opencv.core.Core.sumElems(maskMat8u).`val`[0])
 
@@ -70,7 +76,6 @@ object OpenCVHelper {
 
         // Bitmap output
         val resultBitmap = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
-        // Converti BGR->RGBA per output
         val resultMatRGBA = Mat()
         Imgproc.cvtColor(resultMat, resultMatRGBA, Imgproc.COLOR_BGR2RGBA)
         Utils.matToBitmap(resultMatRGBA, resultBitmap)

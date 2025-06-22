@@ -19,9 +19,10 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
 
-        // Forza l'inclusione delle ABI che hai in jniLibs
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
+            // oppure:
+            // abiFilters.set(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
         }
     }
 
@@ -42,6 +43,8 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // Mostra warning di deprecazione a compilazione (per Kotlin)
+        freeCompilerArgs += listOf("-Xlint:deprecation")
     }
 
     buildFeatures {
@@ -83,6 +86,8 @@ dependencies {
     implementation("com.google.mediapipe:tasks-vision:0.20230731")
     implementation("com.google.mediapipe:tasks-core:0.20230731")
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
+    implementation("jp.co.cyberagent.android:gpuimage:2.1.0")
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")

@@ -26,19 +26,35 @@ object BrushMaskOverlayHelper {
             strokeJoin = Paint.Join.ROUND
             isAntiAlias = true
         }
-        val scaleX = imageWidth / imageSize.first
-        val scaleY = imageHeight / imageSize.second
+
+        val panelW = canvasSize.width.toFloat()
+        val panelH = canvasSize.height.toFloat()
+        val bmpW = imageWidth.toFloat()
+        val bmpH = imageHeight.toFloat()
+        val scale = minOf(panelW / bmpW, panelH / bmpH)
+        val drawnW = bmpW * scale
+        val drawnH = bmpH * scale
+        val left = (panelW - drawnW) / 2f
+        val top = (panelH - drawnH) / 2f
+
+        fun mapCanvasPointToBitmap(pt: Offset): Offset? {
+            if (pt.x !in left..(left + drawnW) || pt.y !in top..(top + drawnH)) return null
+            val xNorm = (pt.x - left) / drawnW
+            val yNorm = (pt.y - top) / drawnH
+            return Offset(
+                x = xNorm * bmpW,
+                y = yNorm * bmpH
+            )
+        }
+
         brushPathList.forEach { (points, thickness) ->
-            // Scala i punti e crea la Path
-            val scaledPoints = points.map { pt ->
-                Offset(
-                    (pt.x - imageOffset.first) * scaleX,
-                    (pt.y - imageOffset.second) * scaleY
-                )
+            val mappedPoints = points.mapNotNull { pt -> mapCanvasPointToBitmap(pt) }
+            if (mappedPoints.size >= 2) {
+                val androidPath = mappedPoints.toAndroidPath()
+                val thicknessOnBitmap = thickness * (bmpW / drawnW)
+                paint.strokeWidth = thicknessOnBitmap
+                canvas.drawPath(androidPath, paint)
             }
-            val androidPath = scaledPoints.toAndroidPath()
-            paint.strokeWidth = thickness * scaleX
-            canvas.drawPath(androidPath, paint)
         }
         return maskBitmap
     }

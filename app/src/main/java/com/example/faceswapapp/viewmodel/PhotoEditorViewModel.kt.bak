@@ -69,35 +69,30 @@ class PhotoEditorViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(PhotoEditorUiState())
     val uiState: StateFlow<PhotoEditorUiState> = _uiState
 
-    // Funzione resetEditModes posizionata in alto per chiarezza
-    private fun resetEditModes(state: PhotoEditorUiState) = state.copy(
-        isResultMode = false,
-        isBrushRemoveMode = false,
-        isCropMode = false,
-        showFilterScreen = false,
-        compositeBitmap = null,
-        personBitmap = null,
-        backgroundBitmap = null,
-        showBrushSheet = false,
-        brushPathList = emptyList(),
-        redoStack = emptyList(),
-        inpaintOriginalBitmap = null,
-        inpaintOriginalBrushPathList = emptyList(),
-        inpaintPreBackend = null
-    )
-
     // ==== COMMON ====
     fun loadImage(context: Context, uri: Uri) {
         viewModelScope.launch {
-            _uiState.update { resetEditModes(it).copy(isLoading = true) }
+            _uiState.update { it.copy(isLoading = true) }
             val bmp = ImageUtils.loadBitmapFromUri(context, uri)
             _uiState.update {
-                resetEditModes(it).copy(
+                it.copy(
                     bitmap = bmp,
                     bitmapInput = bmp,
+                    bitmapResult = null,
+                    isResultMode = false,
+                    isBrushRemoveMode = false,
                     isLoading = false,
+                    compositeBitmap = null,
+                    personBitmap = null,
+                    backgroundBitmap = null,
                     needsMaskReset = true,
-                    lastImageUri = uri
+                    lastImageUri = uri,
+                    inpaintOriginalBitmap = null,
+                    inpaintOriginalBrushPathList = emptyList(),
+                    inpaintPreBackend = null,
+                    brushPathList = emptyList(),
+                    redoStack = emptyList(),
+                    showBrushSheet = false
                 )
             }
         }
@@ -111,7 +106,24 @@ class PhotoEditorViewModel : ViewModel() {
     fun rotate() {
         val bmp = _uiState.value.bitmapInput ?: _uiState.value.bitmap ?: return
         val rotated = ImageUtils.rotateBitmap(bmp, 90f)
-        _uiState.update { resetEditModes(it).copy(bitmap = rotated, bitmapInput = rotated) }
+        _uiState.update {
+            it.copy(
+                bitmap = rotated,
+                bitmapInput = rotated,
+                bitmapResult = null,
+                isResultMode = false,
+                isBrushRemoveMode = false,
+                compositeBitmap = null,
+                personBitmap = null,
+                backgroundBitmap = null,
+                inpaintOriginalBitmap = null,
+                inpaintOriginalBrushPathList = emptyList(),
+                inpaintPreBackend = null,
+                brushPathList = emptyList(),
+                redoStack = emptyList(),
+                showBrushSheet = false
+            )
+        }
     }
 
     // ==== CROP ====
@@ -137,7 +149,27 @@ class PhotoEditorViewModel : ViewModel() {
                 androidRect.width(),
                 androidRect.height()
             )
-            _uiState.update { resetEditModes(it).copy(bitmap = cropped, bitmapInput = cropped, snackbarMessage = "Crop completato!") }
+            _uiState.update {
+                it.copy(
+                    bitmap = cropped,
+                    bitmapInput = cropped,
+                    bitmapResult = null,
+                    isResultMode = false,
+                    isBrushRemoveMode = false,
+                    compositeBitmap = null,
+                    personBitmap = null,
+                    backgroundBitmap = null,
+                    isCropMode = false,
+                    cropRect = Rect(200f, 200f, 600f, 600f),
+                    snackbarMessage = "Crop completato!",
+                    inpaintOriginalBitmap = null,
+                    inpaintOriginalBrushPathList = emptyList(),
+                    inpaintPreBackend = null,
+                    brushPathList = emptyList(),
+                    redoStack = emptyList(),
+                    showBrushSheet = false
+                )
+            }
         } else {
             _uiState.update { it.copy(snackbarMessage = "Seleziona un'area valida!", isCropMode = false) }
         }
@@ -145,10 +177,30 @@ class PhotoEditorViewModel : ViewModel() {
 
     // ==== FILTER ====
     fun showFilter() = _uiState.update { it.copy(showFilterScreen = true) }
+    // Sostituisci questa funzione:
     fun onFilterApplied(filtered: Bitmap) {
-        _uiState.update { resetEditModes(it).copy(bitmap = filtered, bitmapInput = filtered, bitmapResult = filtered, snackbarMessage = "Filtro applicato!") }
+        _uiState.update {
+            it.copy(
+                bitmap = filtered,
+                bitmapInput = filtered,
+                bitmapResult = filtered, // PATCH: mostra il risultato filtrato!
+                isResultMode = true,     // PATCH: attiva la modalità risultato!
+                isBrushRemoveMode = false,
+                showFilterScreen = false,
+                compositeBitmap = null,
+                personBitmap = null,
+                backgroundBitmap = null,
+                snackbarMessage = "Filtro applicato!",
+                inpaintOriginalBitmap = null,
+                inpaintOriginalBrushPathList = emptyList(),
+                inpaintPreBackend = null,
+                brushPathList = emptyList(),
+                redoStack = emptyList(),
+                showBrushSheet = false
+            )
+        }
     }
-    fun onBackFromFilter() = _uiState.update { resetEditModes(it) }
+    fun onBackFromFilter() = _uiState.update { it.copy(showFilterScreen = false) }
 
     // ==== SEGMENTATION / BACKGROUND ====
     fun startSegmentPerson(context: Context, removeBgOnly: Boolean = false) {
@@ -159,7 +211,26 @@ class PhotoEditorViewModel : ViewModel() {
             if (segmented != null) {
                 if (removeBgOnly) {
                     val personWithAlpha = ImageUtils.extractPersonWithAlpha(bmp, segmented)
-                    _uiState.update { resetEditModes(it).copy(bitmap = personWithAlpha, bitmapInput = personWithAlpha, snackbarMessage = "Sfondo rimosso!") }
+                    _uiState.update {
+                        it.copy(
+                            bitmap = personWithAlpha,
+                            bitmapInput = personWithAlpha,
+                            bitmapResult = null,
+                            isResultMode = false,
+                            isBrushRemoveMode = false,
+                            compositeBitmap = null,
+                            personBitmap = null,
+                            backgroundBitmap = null,
+                            isSegmenting = false,
+                            snackbarMessage = "Sfondo rimosso!",
+                            inpaintOriginalBitmap = null,
+                            inpaintOriginalBrushPathList = emptyList(),
+                            inpaintPreBackend = null,
+                            brushPathList = emptyList(),
+                            redoStack = emptyList(),
+                            showBrushSheet = false
+                        )
+                    }
                 } else {
                     _uiState.update { it.copy(personBitmap = segmented, isSegmenting = false) }
                 }
@@ -175,7 +246,9 @@ class PhotoEditorViewModel : ViewModel() {
             _uiState.update { it.copy(isSegmenting = true) }
             val segmented = ImageUtils.segmentPersonBitmap(context, bmp)
             if (segmented != null) {
-                _uiState.update { it.copy(personBitmap = segmented, isSegmenting = false, showBackgroundDialog = true) }
+                _uiState.update {
+                    it.copy(personBitmap = segmented, isSegmenting = false, showBackgroundDialog = true)
+                }
             } else {
                 _uiState.update { it.copy(snackbarMessage = "Errore nella segmentazione", isSegmenting = false) }
             }
@@ -216,21 +289,77 @@ class PhotoEditorViewModel : ViewModel() {
         }
     }
 
+    private fun resetEditModes(state: PhotoEditorUiState) = state.copy(
+        isResultMode = false,
+        isBrushRemoveMode = false,
+        isCropMode = false,
+        showFilterScreen = false,
+        compositeBitmap = null,
+        personBitmap = null,
+        backgroundBitmap = null,
+        showBrushSheet = false,
+        brushPathList = emptyList(),
+        redoStack = emptyList(),
+        inpaintOriginalBitmap = null,
+        inpaintOriginalBrushPathList = emptyList(),
+        inpaintPreBackend = null
+    )
+
     fun applyCompositing() {
         val composite = _uiState.value.compositeBitmap ?: return
-        _uiState.update { resetEditModes(it).copy(bitmap = composite, bitmapInput = composite, snackbarMessage = "Sfondo applicato!") }
+        _uiState.update {
+            it.copy(
+                bitmap = composite,
+                bitmapInput = composite,
+                bitmapResult = null,
+                isResultMode = false,
+                isBrushRemoveMode = false,
+                compositeBitmap = null,
+                personBitmap = null,
+                backgroundBitmap = null,
+                snackbarMessage = "Sfondo applicato!",
+                inpaintOriginalBitmap = null,
+                inpaintOriginalBrushPathList = emptyList(),
+                inpaintPreBackend = null,
+                brushPathList = emptyList(),
+                redoStack = emptyList(),
+                showBrushSheet = false
+            )
+        }
     }
     fun cancelCompositing() {
-        _uiState.update { resetEditModes(it) }
+        _uiState.update { it.copy(compositeBitmap = null, personBitmap = null, backgroundBitmap = null) }
     }
 
     // ==== BRUSH/REMOVE ====
-    fun enableBrushRemove() = _uiState.update { it.copy(isBrushRemoveMode = true, isResultMode = false, showBrushSheet = true) }
-    fun disableBrushRemove() = _uiState.update { resetEditModes(it) }
+    fun enableBrushRemove() = _uiState.update {
+        it.copy(
+            isBrushRemoveMode = true,
+            isResultMode = false,
+            showBrushSheet = true
+        )
+    }
+    fun disableBrushRemove() = _uiState.update {
+        it.copy(
+            isBrushRemoveMode = false,
+            isResultMode = false,
+            showBrushSheet = false,
+            brushPathList = emptyList(),
+            redoStack = emptyList(),
+            inpaintOriginalBitmap = null,
+            inpaintOriginalBrushPathList = emptyList(),
+            inpaintPreBackend = null
+        )
+    }
 
     fun addBrushPath(pointList: List<Offset>, thickness: Float) {
         val current = _uiState.value
-        _uiState.update { it.copy(brushPathList = current.brushPathList + (pointList to thickness), redoStack = emptyList()) }
+        _uiState.update {
+            it.copy(
+                brushPathList = current.brushPathList + (pointList to thickness),
+                redoStack = emptyList()
+            )
+        }
     }
 
     fun undoBrush() {
@@ -302,9 +431,23 @@ class PhotoEditorViewModel : ViewModel() {
                 RemoveBackend.LOCAL -> {
                     val result = ImageUtils.inpaintWithOpenCV(context, bmp, maskBitmap)
                     if (result != null) {
-                        _uiState.update { resetEditModes(it).copy(bitmap = result, bitmapResult = result, snackbarMessage = "Rimozione oggetto (locale OpenCV) completata!") }
+                        _uiState.update {
+                            it.copy(
+                                bitmap = result,
+                                bitmapResult = result,
+                                isResultMode = true,
+                                isBrushRemoveMode = false,
+                                isLoading = false,
+                                snackbarMessage = "Rimozione oggetto (locale OpenCV) completata!"
+                            )
+                        }
                     } else {
-                        _uiState.update { it.copy(snackbarMessage = "Errore rimozione locale", isLoading = false) }
+                        _uiState.update {
+                            it.copy(
+                                snackbarMessage = "Errore rimozione locale",
+                                isLoading = false
+                            )
+                        }
                     }
                 }
                 RemoveBackend.LAMA -> {
@@ -313,16 +456,32 @@ class PhotoEditorViewModel : ViewModel() {
                         image = bmp,
                         mask = maskBitmap,
                         onSuccess = { result ->
-                            _uiState.update { resetEditModes(it).copy(bitmap = result, bitmapResult = result, snackbarMessage = "Oggetto rimosso (AI Lama-Cleaner)!") }
+                            _uiState.update {
+                                it.copy(
+                                    bitmap = result,
+                                    bitmapResult = result,
+                                    isResultMode = true,
+                                    isBrushRemoveMode = false,
+                                    isLoading = false,
+                                    snackbarMessage = "Oggetto rimosso (AI Lama-Cleaner)!"
+                                )
+                            }
                         },
                         onError = { errorMsg ->
-                            _uiState.update { it.copy(snackbarMessage = errorMsg, isLoading = false) }
+                            _uiState.update {
+                                it.copy(
+                                    snackbarMessage = errorMsg,
+                                    isLoading = false
+                                )
+                            }
                         }
                     )
                 }
                 RemoveBackend.HUGGINGFACE -> {
                     val originalPrompt = state.inpaintPrompt.ifBlank { "remove object" }
                     val promptEng = translateIfNeeded(originalPrompt)
+                    // Debug: mostra prompt originale e quello tradotto nei logcat
+                    // Log.d("PHOTOEDITOR", "Prompt IT: $originalPrompt | Prompt EN: $promptEng")
                     ImageUtils.sendMaskAndImageToHuggingFaceInpainting(
                         context = context,
                         image = bmp,
@@ -330,10 +489,24 @@ class PhotoEditorViewModel : ViewModel() {
                         prompt = promptEng,
                         numInferenceSteps = state.numInferenceSteps,
                         onSuccess = { result ->
-                            _uiState.update { resetEditModes(it).copy(bitmap = result, bitmapResult = result, snackbarMessage = "Oggetto rimosso (Hugging Face)!") }
+                            _uiState.update {
+                                it.copy(
+                                    bitmap = result,
+                                    bitmapResult = result,
+                                    isResultMode = true,
+                                    isBrushRemoveMode = false,
+                                    isLoading = false,
+                                    snackbarMessage = "Oggetto rimosso (Hugging Face)!"
+                                )
+                            }
                         },
                         onError = { errorMsg ->
-                            _uiState.update { it.copy(snackbarMessage = errorMsg, isLoading = false) }
+                            _uiState.update {
+                                it.copy(
+                                    snackbarMessage = errorMsg,
+                                    isLoading = false
+                                )
+                            }
                         }
                     )
                 }
@@ -341,17 +514,32 @@ class PhotoEditorViewModel : ViewModel() {
         }
     }
 
-    fun restoreBrushEditing() = _uiState.update { it.copy(bitmap = it.bitmapInput, isBrushRemoveMode = true, isResultMode = false) }
+    fun restoreBrushEditing() = _uiState.update {
+        it.copy(
+            bitmap = it.bitmapInput,
+            isBrushRemoveMode = true,
+            isResultMode = false
+        )
+    }
 
     fun save(context: Context) {
         val bmp = _uiState.value.bitmapResult ?: _uiState.value.bitmapInput ?: _uiState.value.bitmap
         if (bmp != null) {
             ImageUtils.saveToGallery(context, bmp) { ok ->
                 _uiState.update {
-                    resetEditModes(it).copy(
+                    it.copy(
                         snackbarMessage = if (ok) "Immagine salvata!" else "Errore nel salvataggio",
                         bitmap = bmp,
-                        bitmapInput = bmp
+                        bitmapInput = bmp,
+                        bitmapResult = null,
+                        isBrushRemoveMode = false,
+                        isResultMode = false,
+                        showBrushSheet = false,
+                        brushPathList = emptyList(),
+                        redoStack = emptyList(),
+                        inpaintOriginalBitmap = null,
+                        inpaintOriginalBrushPathList = emptyList(),
+                        inpaintPreBackend = null
                     )
                 }
             }

@@ -7,9 +7,15 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import android.os.Environment
+import android.util.Base64
 import android.provider.MediaStore
 import androidx.compose.ui.geometry.Offset
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.segmentation.Segmentation
+import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
@@ -20,22 +26,44 @@ import java.io.File
 import java.io.FileFilter
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.regex.Pattern
-
-// --- ML Kit imports per segmentazione persona ---
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
-import com.google.android.gms.tasks.Tasks
-import com.google.mlkit.vision.segmentation.Segmentation
-
-import android.media.ExifInterface // <-- Import per gestione EXIF
-
-// --- IMPORT OPENCV HELPER --- (aggiunto per inpainting reale)
+import android.media.ExifInterface
 import com.example.faceswapapp.OpenCVHelper
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import org.json.JSONObject
+import org.json.JSONArray
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import okhttp3.Callback
+import okhttp3.Call
+import okhttp3.Response
+import java.io.IOException
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 object ImageUtils {
+    // ... tutte le funzioni precedenti invariato ...
+
+    // Salva un bitmap come PNG in cacheDir con nome file scelto
+    fun saveBitmapToCache(context: Context, bitmap: Bitmap, filename: String) {
+        try {
+            val file = File(context.cacheDir, filename)
+            FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     suspend fun loadBitmapFromUri(context: Context, uri: Uri): Bitmap? {
         return withContext(Dispatchers.IO) {
@@ -204,14 +232,45 @@ object ImageUtils {
     }
 
     fun compositePersonOnBackground(
-        personBitmap: Bitmap,
+        originalBitmap: Bitmap,
+        maskBitmap: Bitmap,
         backgroundBitmap: Bitmap
     ): Bitmap {
-        val bgResized = Bitmap.createScaledBitmap(backgroundBitmap, personBitmap.width, personBitmap.height, true)
-        val result = Bitmap.createBitmap(personBitmap.width, personBitmap.height, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(result)
-        canvas.drawBitmap(bgResized, 0f, 0f, null)
-        canvas.drawBitmap(personBitmap, 0f, 0f, null)
+        val width = originalBitmap.width
+        val height = originalBitmap.height
+        val bgResized = Bitmap.createScaledBitmap(backgroundBitmap, width, height, true)
+        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+        val origPixels = IntArray(width * height)
+        val maskPixels = IntArray(width * height)
+        val bgPixels = IntArray(width * height)
+        originalBitmap.getPixels(origPixels, 0, width, 0, 0, width, height)
+        maskBitmap.getPixels(maskPixels, 0, width, 0, 0, width, height)
+        bgResized.getPixels(bgPixels, 0, width, 0, 0, width, height)
+
+        for (i in origPixels.indices) {
+            val maskAlpha = (maskPixels[i] shr 24) and 0xFF
+            if (maskAlpha > 128) {
+                result.setPixel(i % width, i / width, origPixels[i])
+            } else {
+                result.setPixel(i % width, i / width, bgPixels[i])
+            }
+        }
+        return result
+    }
+
+    fun extractPersonWithAlpha(original: Bitmap, mask: Bitmap): Bitmap {
+        val width = original.width
+        val height = original.height
+        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val origPixels = IntArray(width * height)
+        val maskPixels = IntArray(width * height)
+        original.getPixels(origPixels, 0, width, 0, 0, width, height)
+        mask.getPixels(maskPixels, 0, width, 0, 0, width, height)
+        for (i in origPixels.indices) {
+            val maskAlpha = (maskPixels[i] shr 24) and 0xFF
+            result.setPixel(i % width, i / width, (maskAlpha shl 24) or (origPixels[i] and 0x00FFFFFF))
+        }
         return result
     }
 
@@ -226,24 +285,56 @@ object ImageUtils {
 
                 val maskResult = Tasks.await(segmenter.process(image))
                 val mask = maskResult?.buffer
-                if (mask != null) {
-                    val width = bitmap.width
-                    val height = bitmap.height
-                    val maskBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                    val maskPixels = FloatArray(width * height)
+                val maskWidth = maskResult?.width ?: 0
+                val maskHeight = maskResult?.height ?: 0
+
+                if (mask != null && maskWidth > 0 && maskHeight > 0) {
+                    // Crea bitmap della maschera a risoluzione nativa ML Kit
+                    val maskBitmap = Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ALPHA_8)
+                    val maskPixels = FloatArray(maskWidth * maskHeight)
                     mask.rewind()
                     for (i in maskPixels.indices) {
                         maskPixels[i] = mask.float
                     }
-                    for (y in 0 until height) {
-                        for (x in 0 until width) {
-                            val alpha = (maskPixels[y * width + x] * 255).toInt().coerceIn(0, 255)
-                            val rgb = bitmap.getPixel(x, y)
-                            maskBitmap.setPixel(x, y, (alpha shl 24) or (rgb and 0x00FFFFFF))
+                    for (y in 0 until maskHeight) {
+                        for (x in 0 until maskWidth) {
+                            val alpha = (maskPixels[y * maskWidth + x] * 255).toInt().coerceIn(0, 255)
+                            maskBitmap.setPixel(x, y, (alpha shl 24))
                         }
                     }
-                    maskBitmap
-                } else null
+
+                    // === PATCH: SCALING "FILL" (CROP) ===
+                    val aspectInput = bitmap.width.toFloat() / bitmap.height
+                    val aspectMask = maskWidth.toFloat() / maskHeight
+
+                    val destRect: android.graphics.Rect
+                    val srcRect: android.graphics.Rect
+
+                    if (aspectInput > aspectMask) {
+                        // L'immagine di input è più larga: tagliare la maschera in orizzontale
+                        val newMaskWidth = (maskHeight * aspectInput).toInt()
+                        val cropX = (maskWidth - newMaskWidth) / 2
+                        srcRect = android.graphics.Rect(
+                            cropX.coerceAtLeast(0), 0,
+                            (cropX + newMaskWidth).coerceAtMost(maskWidth), maskHeight
+                        )
+                    } else {
+                        // L'immagine di input è più alta: tagliare la maschera in verticale
+                        val newMaskHeight = (maskWidth / aspectInput).toInt()
+                        val cropY = (maskHeight - newMaskHeight) / 2
+                        srcRect = android.graphics.Rect(
+                            0, cropY.coerceAtLeast(0),
+                            maskWidth, (cropY + newMaskHeight).coerceAtMost(maskHeight)
+                        )
+                    }
+                    destRect = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
+
+                    val finalMask = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ALPHA_8)
+                    val canvas = android.graphics.Canvas(finalMask)
+                    canvas.drawBitmap(maskBitmap, srcRect, destRect, null)
+                    return@withContext finalMask
+                }
+                null
             } catch (e: Exception) {
                 null
             }
@@ -297,7 +388,14 @@ object ImageUtils {
         }
     }
 
+    fun saveBitmapExact(context: Context, bitmap: Bitmap, filename: String) {
+        saveBitmapToCache(context, bitmap, filename)
+    }
+
+    // == PATCH: OpenCV locale salva inputcv.png & maskcv.png ==
     fun inpaintWithOpenCV(context: Context, bitmap: Bitmap, maskBitmap: Bitmap): Bitmap? {
+        saveBitmapExact(context, bitmap, "inputcv.png")
+        saveBitmapExact(context, maskBitmap, "maskcv.png")
         saveDebugMaskToFiles(context, maskBitmap)
         return try {
             val result = OpenCVHelper.inpaint(bitmap, maskBitmap)
@@ -309,13 +407,6 @@ object ImageUtils {
         }
     }
 
-    fun inpaintMaskArea(context: Context, bitmap: Bitmap, maskBitmap: Bitmap): Bitmap? =
-        inpaintWithOpenCV(context, bitmap, maskBitmap)
-
-    /**
-     * Invio maschera e immagine a Lama Cleaner (AI REST API).
-     * Sostituisci con la tua implementazione reale.
-     */
     fun sendMaskAndImageToLamaCleaner(
         context: Context,
         image: Bitmap,
@@ -323,30 +414,114 @@ object ImageUtils {
         onSuccess: (Bitmap) -> Unit,
         onError: (String) -> Unit
     ) {
-        // TODO: Implementa la chiamata REST a Lama Cleaner e chiama onSuccess/onError
-        // Per ora stub che ritorna errore:
+        saveBitmapExact(context, image, "input.png")
+        saveBitmapExact(context, mask, "mask.png")
         onError("Funzione sendMaskAndImageToLamaCleaner non implementata!")
-        // Per test: puoi usare onSuccess(image) per vedere la pipeline funzionare
-        // onSuccess(image)
     }
 
-    /**
-     * Invio maschera e immagine a HuggingFace Inpainting (AI REST API).
-     * Sostituisci con la tua implementazione reale.
-     */
+    // PATCH: sendMaskAndImageToHuggingFaceInpainting salva inputh.png/maskh.png e chiama realmente lo Space HuggingFace
     fun sendMaskAndImageToHuggingFaceInpainting(
-        context: Context,
+        context: android.content.Context,
         image: Bitmap,
         mask: Bitmap,
         prompt: String,
-        numInferenceSteps: Int,
-        guidanceScale: Int,
+        numInferenceSteps: Int = 15, // PATCH: nuovo parametro con default
         onSuccess: (Bitmap) -> Unit,
         onError: (String) -> Unit
     ) {
-        // TODO: Implementa la chiamata REST a HuggingFace Inpainting e chiama onSuccess/onError
-        onError("Funzione sendMaskAndImageToHuggingFaceInpainting non implementata!")
-        // Per test: puoi usare onSuccess(image)
-        // onSuccess(image)
+        val ENDPOINT_INPAINT = "https://cantuma1-mynew-inpainting-space.hf.space/custom_inpaint_upload"
+        val ENDPOINT_POLL = "https://cantuma1-mynew-inpainting-space.hf.space/custom_poll"
+
+        val imageFile = File(context.cacheDir, "inputh.png")
+        val maskFile = File(context.cacheDir, "maskh.png")
+        FileOutputStream(imageFile).use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        FileOutputStream(maskFile).use { mask.compress(Bitmap.CompressFormat.PNG, 100, it) }
+
+        val reqBody = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("prompt", prompt)
+            .addFormDataPart("num_inference_steps", numInferenceSteps.toString()) // PATCH: aggiungi steps
+            .addFormDataPart(
+                "original", "inputh.png",
+                imageFile.asRequestBody("image/png".toMediaTypeOrNull())
+            )
+            .addFormDataPart(
+                "mask", "maskh.png",
+                maskFile.asRequestBody("image/png".toMediaTypeOrNull())
+            )
+            .build()
+        val client = OkHttpClient()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // 1. POST upload
+                val uploadReq = Request.Builder().url(ENDPOINT_INPAINT).post(reqBody).build()
+                val uploadResp = client.newCall(uploadReq).execute()
+                val uploadBody = uploadResp.body?.string() ?: ""
+                if (!uploadResp.isSuccessful) {
+                    withContext(Dispatchers.Main) {
+                        onError("Errore API: ${uploadResp.message} -- $uploadBody")
+                    }
+                    return@launch
+                }
+                val eventId = try {
+                    val arr = JSONObject(uploadBody).optJSONArray("data")
+                    arr?.optString(2)
+                } catch (e: Exception) { null }
+                if (eventId.isNullOrEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        onError("Nessun event_id nella risposta: $uploadBody")
+                    }
+                    return@launch
+                }
+                // 2. Polling asincrono per la URL
+                var outputUrl: String? = null
+                for (attempt in 0 until 60) { // Fino a 10 minuti (60 tentativi * 10s)
+                    val pollPayload = JSONObject().put("data", JSONArray().put(eventId))
+                    val pollReqBody = pollPayload.toString()
+                        .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                    val pollReq = Request.Builder().url(ENDPOINT_POLL).post(pollReqBody).build()
+                    val pollResp = client.newCall(pollReq).execute()
+                    val pollBody = pollResp.body?.string() ?: ""
+                    if (pollResp.isSuccessful) {
+                        val root = JSONObject(pollBody)
+                        val status = root.optString("status", "")
+                        val url: String? = root.optJSONArray("data")?.optString(1)
+                        if (status == "completed" && !url.isNullOrBlank()) {
+                            outputUrl = url
+                            break
+                        } else if (status == "not_found") {
+                            withContext(Dispatchers.Main) {
+                                onError("Job non trovato: $pollBody")
+                            }
+                            return@launch
+                        }
+                    }
+                    delay(10_000)
+                }
+                if (!outputUrl.isNullOrBlank()) {
+                    val imgReq = Request.Builder().url(outputUrl!!).get().build()
+                    val imgResp = client.newCall(imgReq).execute()
+                    if (imgResp.isSuccessful) {
+                        val imgBytes = imgResp.body?.bytes()
+                        if (imgBytes != null && imgBytes.isNotEmpty()) {
+                            val resultBitmap = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.size)
+                            withContext(Dispatchers.Main) { onSuccess(resultBitmap) }
+                            return@launch
+                        }
+                    }
+                    withContext(Dispatchers.Main) {
+                        onError("Errore scaricando l'immagine risultante.")
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        onError("Timeout: nessun risultato dopo 10 minuti.")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onError("Eccezione: ${e.message}") }
+            } finally {
+                try { imageFile.delete() } catch (_: Exception) {}
+                try { maskFile.delete() } catch (_: Exception) {}
+            }
+        }
     }
 }
