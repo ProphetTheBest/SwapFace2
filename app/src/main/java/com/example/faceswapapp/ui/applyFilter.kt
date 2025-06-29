@@ -20,12 +20,12 @@ import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.core.CvType
 
-
 fun applyFilter(
     bitmap: Bitmap,
     type: FilterType,
     context: Context,
-    saturation: Float = 1f
+    saturation: Float = 1f,
+    animeGanModelName: String = "face_paint_512_v2_tf_nhwc_inout.tflite" // PATCH: aggiunto parametro modello
 ): Bitmap {
     val width = bitmap.width
     val height = bitmap.height
@@ -65,7 +65,7 @@ fun applyFilter(
             applyCartoonOpenGL(bitmap, context)
         }
         FilterType.AnimeGAN -> {
-            applyAnimeGAN(bitmap, context)
+            applyAnimeGAN(bitmap, context, animeGanModelName) // PATCH: passa modello selezionato
         }
         FilterType.Cartoon -> {
             applyCartoonParametric(bitmap)

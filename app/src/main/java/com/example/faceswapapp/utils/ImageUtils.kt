@@ -50,8 +50,36 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
+private const val TAG = "FSWAPTRACE"
+
 object ImageUtils {
     // ... tutte le funzioni precedenti invariato ...
+
+    // Salva una bitmap PNG in cacheDir con nome file scelto e restituisce il path assoluto
+    fun saveJobResultBitmapToFile(context: Context, bitmap: Bitmap, jobId: String): String {
+        try {
+            val file = File(context.cacheDir, "job_result_$jobId.png")
+            FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            Log.d(TAG, "saveJobResultBitmapToFile: Saved result to ${file.absolutePath}")
+            return file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "saveJobResultBitmapToFile: Error ${e.message}")
+        }
+        return ""
+    }
+
+    fun loadBitmapFromFile(path: String): Bitmap? {
+        return try {
+            val bmp = BitmapFactory.decodeFile(path)
+            Log.d(TAG, "loadBitmapFromFile: Loaded $path ok? ${bmp != null}")
+            bmp
+        } catch (e: Exception) {
+            Log.e(TAG, "loadBitmapFromFile: Error loading $path: ${e.message}")
+            null
+        }
+    }
 
     // Salva un bitmap come PNG in cacheDir con nome file scelto
     fun saveBitmapToCache(context: Context, bitmap: Bitmap, filename: String) {
@@ -419,19 +447,22 @@ object ImageUtils {
         onError("Funzione sendMaskAndImageToLamaCleaner non implementata!")
     }
 
-    // PATCH: sendMaskAndImageToHuggingFaceInpainting salva inputh.png/maskh.png e chiama realmente lo Space HuggingFace
-    fun sendMaskAndImageToHuggingFaceInpainting(
-        context: android.content.Context,
+    // PATCH: submit separato da poll per HuggingFace
+    fun submitHuggingFaceJob(
+        context: Context,
         image: Bitmap,
         mask: Bitmap,
         prompt: String,
-        numInferenceSteps: Int = 15, // PATCH: nuovo parametro con default
-        onSuccess: (Bitmap) -> Unit,
+        numInferenceSteps: Int = 15,
+        onSuccess: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        val ENDPOINT_INPAINT = "https://cantuma1-mynew-inpainting-space.hf.space/custom_inpaint_upload"
-        val ENDPOINT_POLL = "https://cantuma1-mynew-inpainting-space.hf.space/custom_poll"
 
+        // salvataggio immagini in cache
+        saveBitmapExact(context, image, "inputh_debug.png")
+        saveBitmapExact(context, mask, "maskh_debug.png")
+
+        val ENDPOINT_INPAINT = "https://cantuma1-mynew-inpainting-space.hf.space/custom_inpaint_upload"
         val imageFile = File(context.cacheDir, "inputh.png")
         val maskFile = File(context.cacheDir, "maskh.png")
         FileOutputStream(imageFile).use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -439,7 +470,7 @@ object ImageUtils {
 
         val reqBody = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("prompt", prompt)
-            .addFormDataPart("num_inference_steps", numInferenceSteps.toString()) // PATCH: aggiungi steps
+            .addFormDataPart("num_inference_steps", numInferenceSteps.toString())
             .addFormDataPart(
                 "original", "inputh.png",
                 imageFile.asRequestBody("image/png".toMediaTypeOrNull())
@@ -452,7 +483,6 @@ object ImageUtils {
         val client = OkHttpClient()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // 1. POST upload
                 val uploadReq = Request.Builder().url(ENDPOINT_INPAINT).post(reqBody).build()
                 val uploadResp = client.newCall(uploadReq).execute()
                 val uploadBody = uploadResp.body?.string() ?: ""
@@ -472,12 +502,30 @@ object ImageUtils {
                     }
                     return@launch
                 }
-                // 2. Polling asincrono per la URL
+                withContext(Dispatchers.Main) { onSuccess(eventId) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onError("Eccezione: ${e.message}") }
+            } finally {
+                try { imageFile.delete() } catch (_: Exception) {}
+                try { maskFile.delete() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun pollHuggingFaceJobResult(
+        context: Context,
+        jobId: String,
+        onSuccess: (Bitmap) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val ENDPOINT_POLL = "https://cantuma1-mynew-inpainting-space.hf.space/custom_poll"
+        val client = OkHttpClient()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
                 var outputUrl: String? = null
-                for (attempt in 0 until 60) { // Fino a 10 minuti (60 tentativi * 10s)
-                    val pollPayload = JSONObject().put("data", JSONArray().put(eventId))
-                    val pollReqBody = pollPayload.toString()
-                        .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                for (attempt in 0 until 60) { // max 10 min
+                    val pollPayload = JSONObject().put("data", JSONArray().put(jobId))
+                    val pollReqBody = pollPayload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
                     val pollReq = Request.Builder().url(ENDPOINT_POLL).post(pollReqBody).build()
                     val pollResp = client.newCall(pollReq).execute()
                     val pollBody = pollResp.body?.string() ?: ""
@@ -518,9 +566,6 @@ object ImageUtils {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { onError("Eccezione: ${e.message}") }
-            } finally {
-                try { imageFile.delete() } catch (_: Exception) {}
-                try { maskFile.delete() } catch (_: Exception) {}
             }
         }
     }

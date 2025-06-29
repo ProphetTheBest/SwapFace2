@@ -37,7 +37,9 @@ fun FilterPanel3D(
     cartoonEdgeKernel: Float = 2f,
     onCartoonEdgeKernelChange: (Float) -> Unit = {},
     cartoonUseCanny: Boolean = false,
-    onCartoonUseCannyChange: (Boolean) -> Unit = {}
+    onCartoonUseCannyChange: (Boolean) -> Unit = {},
+    animeGanModelName: String = "face_paint_512_v2_tf_nhwc_inout.tflite", // PATCH: aggiunto
+    onAnimeGanModelChange: (String) -> Unit = {} // PATCH: aggiunto
 ) {
     val panelShape: Shape = RoundedCornerShape(28.dp)
     val panelGradient = Brush.verticalGradient(
@@ -46,6 +48,14 @@ fun FilterPanel3D(
             Color(0xFF81D4FA), // azzurro intermedio
             Color(0xFF4FC3F7)  // azzurro più intenso
         )
+    )
+
+    // PATCH: lista modelli AnimeGAN
+    val animeGanModels = listOf(
+        "face_paint_512_v2_tf_nhwc_inout.tflite" to "FacePaint v2",
+        "celeba_distill_tf_nhwc_inout.tflite" to "CelebA Distill",
+        "face_paint_512_v1_tf_nhwc_inout.tflite" to "FacePaint v1",
+        "paprika_tf_nhwc_inout.tflite" to "Paprika"
     )
 
     Surface(
@@ -95,6 +105,30 @@ fun FilterPanel3D(
                             useCanny = cartoonUseCanny,
                             onUseCannyChange = onCartoonUseCannyChange
                         )
+                    }
+                    // PATCH: pannello modelli AnimeGAN solo se attivo
+                    if (filter == FilterType.AnimeGAN && activeFilters.contains(FilterType.AnimeGAN)) {
+                        Spacer(Modifier.height(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            shadowElevation = 10.dp,
+                            color = Color.White,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text("Scegli il modello AnimeGAN:", style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.height(10.dp))
+                                animeGanModels.forEach { (modelFile, label) ->
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = animeGanModelName == modelFile,
+                                            onClick = { onAnimeGanModelChange(modelFile) }
+                                        )
+                                        Text(label, Modifier.padding(start = 8.dp))
+                                    }
+                                }
+                            }
+                        }
                     }
                     // Slider per filtri che hanno parametro (eccetto Cartoon, che ha pannello dedicato)
                     if (filter.hasParameter && activeFilters.contains(filter) && filter != FilterType.Cartoon) {

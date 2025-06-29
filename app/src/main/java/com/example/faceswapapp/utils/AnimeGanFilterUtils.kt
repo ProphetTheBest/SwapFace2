@@ -6,29 +6,23 @@ import android.graphics.Canvas
 import android.util.Log
 import com.example.faceswapapp.ui.AnimeGanTFLite
 import com.example.faceswapapp.ui.adjustSaturation
-import org.tensorflow.lite.Interpreter
-import java.io.FileInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.channels.FileChannel
 
-
-class AnimeGanTFLite(context: Context) {
-    // ... (inizializzazione interpreter, come già scritto nei tuoi file)
-    // ... (funzione runOn, come già nei tuoi file)
-    // Lasciala qui, è giusto che sia interna al filtro GAN.
-    private val interpreter: Interpreter
+/**
+ * Classe AnimeGanTFLite patchata per accettare il nome del modello come parametro.
+ */
+class AnimeGanTFLite(context: Context, modelName: String) {
+    private val interpreter: org.tensorflow.lite.Interpreter
 
     init {
-        val assetFileDescriptor = context.assets.openFd("face_paint_512_v2_tf_nhwc_inout.tflite")
-        val fileInputStream = FileInputStream(assetFileDescriptor.fileDescriptor)
+        val assetFileDescriptor = context.assets.openFd(modelName)
+        val fileInputStream = java.io.FileInputStream(assetFileDescriptor.fileDescriptor)
         fileInputStream.channel.position(assetFileDescriptor.startOffset)
         val modelBuffer = fileInputStream.channel.map(
-            FileChannel.MapMode.READ_ONLY,
+            java.nio.channels.FileChannel.MapMode.READ_ONLY,
             assetFileDescriptor.startOffset,
             assetFileDescriptor.declaredLength
         )
-        interpreter = Interpreter(modelBuffer)
+        interpreter = org.tensorflow.lite.Interpreter(modelBuffer)
     }
 
     fun runOn(bitmap: Bitmap): Bitmap? {
@@ -44,8 +38,8 @@ class AnimeGanTFLite(context: Context) {
             bitmap
         }
 
-        val input = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4)
-        input.order(ByteOrder.nativeOrder())
+        val input = java.nio.ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4)
+        input.order(java.nio.ByteOrder.nativeOrder())
         for (y in 0 until inputSize) {
             for (x in 0 until inputSize) {
                 val pixel = resized.getPixel(x, y)
@@ -77,15 +71,20 @@ class AnimeGanTFLite(context: Context) {
     }
 }
 
-fun applyAnimeGAN(bitmap: Bitmap, context: Context): Bitmap {
+/**
+ * Tutte le funzioni seguenti accettano il parametro modelName (default: FacePaint v2)
+ */
+
+fun applyAnimeGAN(
+    bitmap: Bitmap,
+    context: Context,
+    modelName: String = "face_paint_512_v2_tf_nhwc_inout.tflite"
+): Bitmap {
     val origWidth = bitmap.width
     val origHeight = bitmap.height
-    // Ridimensiona tutta la foto a 512x512
     val resized = Bitmap.createScaledBitmap(bitmap, 512, 512, true)
-    // Applica il filtro a tutta la foto ridimensionata
-    val animeGanResult: Bitmap? = AnimeGanTFLite(context).runOn(resized)
+    val animeGanResult: Bitmap? = AnimeGanTFLite(context, modelName).runOn(resized)
     if (animeGanResult == null) return bitmap
-    // Riscalala alle dimensioni originali
     return Bitmap.createScaledBitmap(animeGanResult, origWidth, origHeight, true)
 }
 
@@ -93,7 +92,11 @@ fun applyAnimeGAN(bitmap: Bitmap, context: Context): Bitmap {
  * Applica AnimeGAN2 preservando dimensioni e proporzioni dell'immagine originale.
  * Solo la parte centrale risulterà in stile anime.
  */
-fun applyAnimeGanPreservingSize(bitmap: Bitmap, context: Context): Bitmap {
+fun applyAnimeGanPreservingSize(
+    bitmap: Bitmap,
+    context: Context,
+    modelName: String = "face_paint_512_v2_tf_nhwc_inout.tflite"
+): Bitmap {
     val origWidth = bitmap.width
     val origHeight = bitmap.height
     val cropSize = minOf(origWidth, origHeight)
@@ -102,10 +105,9 @@ fun applyAnimeGanPreservingSize(bitmap: Bitmap, context: Context): Bitmap {
     // Crop centrale quadrato
     val squareCrop = Bitmap.createBitmap(bitmap, cropX, cropY, cropSize, cropSize)
     // Filtro AnimeGAN su crop
-    val animeGanResult: Bitmap? = AnimeGanTFLite(context).runOn(squareCrop)
+    val animeGanResult: Bitmap? = AnimeGanTFLite(context, modelName).runOn(squareCrop)
     if (animeGanResult == null) return bitmap
     // (opzionale) smoothing & saturation
-    // var result = smoothBitmap(animeGanResult, context, 2f)
     var result = animeGanResult
     result = adjustSaturation(result, 0.85f)
     // Ridimensiona il risultato alle dimensioni del crop centrale
@@ -116,22 +118,27 @@ fun applyAnimeGanPreservingSize(bitmap: Bitmap, context: Context): Bitmap {
     canvas.drawBitmap(result, cropX.toFloat(), cropY.toFloat(), null)
     return finalBitmap
 }
-fun applyFullAnimeGan(bitmap: Bitmap, context: Context): Bitmap {
+
+fun applyFullAnimeGan(
+    bitmap: Bitmap,
+    context: Context,
+    modelName: String = "face_paint_512_v2_tf_nhwc_inout.tflite"
+): Bitmap {
     val origWidth = bitmap.width
     val origHeight = bitmap.height
     val resized = Bitmap.createScaledBitmap(bitmap, 512, 512, true)
-    val animeGanResult = AnimeGanTFLite(context).runOn(resized) ?: return bitmap
+    val animeGanResult = AnimeGanTFLite(context, modelName).runOn(resized) ?: return bitmap
     return Bitmap.createScaledBitmap(animeGanResult, origWidth, origHeight, true)
 }
 
-fun applyFullFrameAnimeGan(bitmap: Bitmap, context: Context): Bitmap {
+fun applyFullFrameAnimeGan(
+    bitmap: Bitmap,
+    context: Context,
+    modelName: String = "face_paint_512_v2_tf_nhwc_inout.tflite"
+): Bitmap {
     val origWidth = bitmap.width
     val origHeight = bitmap.height
-
-    // Ridimensiona tutta la foto a 512x512
     val resized = Bitmap.createScaledBitmap(bitmap, 512, 512, true)
-    val animeGanResult = AnimeGanTFLite(context).runOn(resized) ?: return bitmap
-
-    // Riscalala alle dimensioni originali
+    val animeGanResult = AnimeGanTFLite(context, modelName).runOn(resized) ?: return bitmap
     return Bitmap.createScaledBitmap(animeGanResult, origWidth, origHeight, true)
 }

@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -22,7 +23,8 @@ fun PhotoEditorToolbar(
     onRemoveObject: () -> Unit,
     onSave: () -> Unit,
     onBrushRemove: () -> Unit = {},
-    brushRemoveEnabled: Boolean = true
+    brushRemoveEnabled: Boolean = true,
+    onJobQueue: () -> Unit = {}, // PATCH: aggiunto handler per job queue
 ) {
     BottomAppBar(
         actions = {
@@ -49,6 +51,9 @@ fun PhotoEditorToolbar(
                     Icons.Filled.Brush,
                     contentDescription = "Pennello Rimuovi Oggetto"
                 )
+            }
+            IconButton(onClick = onJobQueue) {
+                Icon(Icons.Filled.List, contentDescription = "Coda Job HuggingFace")
             }
             IconButton(onClick = onSave) {
                 Icon(Icons.Filled.Save, contentDescription = "Salva")

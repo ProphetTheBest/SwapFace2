@@ -9,6 +9,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.faceswapapp.ui.JobQueueDataStore
 import com.example.faceswapapp.utils.ImageUtils
 import com.example.faceswapapp.utils.BrushMaskOverlayHelper
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,7 +21,22 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
-import com.example.faceswapapp.viewmodel.RemoveBackend
+
+private val TAG = "FSWAPTRACE"
+
+enum class InpaintJobStatus { QUEUED, PROCESSING, COMPLETED, ERROR }
+
+data class InpaintJob(
+    val jobId: String,
+    val prompt: String,
+    val mask: Bitmap?,
+    val original: Bitmap?,
+    val status: InpaintJobStatus,
+    val result: Bitmap? = null,
+    val error: String? = null,
+    val resultPath: String? = null,
+    val maskPathList: List<Pair<List<Offset>, Float>>? = null
+)
 
 data class PhotoEditorUiState(
     val bitmap: Bitmap? = null,
@@ -38,21 +54,17 @@ data class PhotoEditorUiState(
     val personBitmap: Bitmap? = null,
     val backgroundBitmap: Bitmap? = null,
     val compositeBitmap: Bitmap? = null,
-    // Brush/Remove
     val brushPathList: List<Pair<List<Offset>, Float>> = emptyList(),
     val redoStack: List<Pair<List<Offset>, Float>> = emptyList(),
     val currentBrushSize: Float = 40f,
-    // Brush overlay/canvas size and offsets
     val brushCanvasSize: IntSize = IntSize(1, 1),
     val brushImageOffset: Pair<Float, Float> = 0f to 0f,
     val brushImageSize: Pair<Float, Float> = 1f to 1f,
     val brushPreviewPosition: Offset? = null,
-    // Backend e prompt per rimozione oggetti
     val removeBackend: RemoveBackend = RemoveBackend.LAMA,
     val inpaintPrompt: String = "remove object",
-    val numInferenceSteps: Int = 15, // PATCH: default 15
+    val numInferenceSteps: Int = 15,
     val showBrushSheet: Boolean = false,
-    // Dialoghi/modal
     val showBackgroundDialog: Boolean = false,
     val photoUriForCamera: Uri? = null,
     val needsMaskReset: Boolean = false,
@@ -62,33 +74,130 @@ data class PhotoEditorUiState(
     val parentHeight: Int = 0,
     val inpaintOriginalBitmap: Bitmap? = null,
     val inpaintOriginalBrushPathList: List<Pair<List<Offset>, Float>> = emptyList(),
-    val inpaintPreBackend: RemoveBackend? = null
+    val inpaintPreBackend: RemoveBackend? = null,
+    val inpaintJobs: List<InpaintJob> = emptyList(),
+    val currentJobId: String? = null // PATCH: campo per il job selezionato
 )
 
 class PhotoEditorViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(PhotoEditorUiState())
     val uiState: StateFlow<PhotoEditorUiState> = _uiState
 
-    // Funzione resetEditModes posizionata in alto per chiarezza
-    private fun resetEditModes(state: PhotoEditorUiState) = state.copy(
-        isResultMode = false,
-        isBrushRemoveMode = false,
-        isCropMode = false,
-        showFilterScreen = false,
-        compositeBitmap = null,
-        personBitmap = null,
-        backgroundBitmap = null,
-        showBrushSheet = false,
-        brushPathList = emptyList(),
-        redoStack = emptyList(),
-        inpaintOriginalBitmap = null,
-        inpaintOriginalBrushPathList = emptyList(),
-        inpaintPreBackend = null
-    )
+    // PATCH: funzione per cancellare un job dalla lista
+    fun deleteJob(context: Context, jobId: String) {
+        viewModelScope.launch {
+            val newJobs = _uiState.value.inpaintJobs.filter { it.jobId != jobId }
+            _uiState.update { it.copy(inpaintJobs = newJobs) }
+            // aggiorna il DataStore
+            val jobsPersistable = newJobs.map {
+                InpaintJobPersistable(
+                    jobId = it.jobId,
+                    prompt = it.prompt,
+                    status = when (it.status) {
+                        InpaintJobStatus.QUEUED -> InpaintJobStatusPersistable.QUEUED
+                        InpaintJobStatus.PROCESSING -> InpaintJobStatusPersistable.PROCESSING
+                        InpaintJobStatus.COMPLETED -> InpaintJobStatusPersistable.COMPLETED
+                        InpaintJobStatus.ERROR -> InpaintJobStatusPersistable.ERROR
+                    },
+                    error = it.error,
+                    resultPath = it.resultPath,
+                    maskPathList = it.maskPathList
+                )
+            }
+            JobQueueDataStore.saveJobList(context, jobsPersistable)
+        }
+    }
 
-    // ==== COMMON ====
+    // PATCH: nuova funzione per impostare il job corrente
+    fun setCurrentJobId(jobId: String?) {
+        Log.d("DEBUG_BUTTON", "Imposto currentJobId = $jobId")
+        _uiState.update { it.copy(currentJobId = jobId) }
+    }
+
+    // PATCH: Carica il risultato di un job dato un path
+    fun loadJobResultByPath(resultPath: String) {
+        val resultBitmap = com.example.faceswapapp.utils.ImageUtils.loadBitmapFromFile(resultPath)
+        if (resultBitmap != null) {
+            _uiState.update { it.copy(
+                bitmap = resultBitmap,
+                bitmapResult = resultBitmap,
+                isResultMode = true,
+                isBrushRemoveMode = false,
+                snackbarMessage = "Risultato job caricato!"
+            ) }
+        }
+    }
+
+    fun loadPersistentJobs(context: Context) {
+        viewModelScope.launch {
+            val jobList = JobQueueDataStore.loadJobList(context)
+            val jobs = jobList.map {
+                val resultBitmap = it.resultPath?.let { path -> ImageUtils.loadBitmapFromFile(path) }
+                InpaintJob(
+                    jobId = it.jobId,
+                    prompt = it.prompt,
+                    mask = null,
+                    original = null,
+                    status = when (it.status) {
+                        InpaintJobStatusPersistable.QUEUED -> InpaintJobStatus.QUEUED
+                        InpaintJobStatusPersistable.PROCESSING -> InpaintJobStatus.PROCESSING
+                        InpaintJobStatusPersistable.COMPLETED -> InpaintJobStatus.COMPLETED
+                        InpaintJobStatusPersistable.ERROR -> InpaintJobStatus.ERROR
+                    },
+                    result = resultBitmap,
+                    error = it.error,
+                    resultPath = it.resultPath,
+                    maskPathList = it.maskPathList
+                )
+            }
+            _uiState.update { it.copy(inpaintJobs = jobs) }
+        }
+    }
+
+    private fun persistJobsIfNeeded(context: Context) {
+        viewModelScope.launch {
+            val jobs = _uiState.value.inpaintJobs.map {
+                InpaintJobPersistable(
+                    jobId = it.jobId,
+                    prompt = it.prompt,
+                    status = when (it.status) {
+                        InpaintJobStatus.QUEUED -> InpaintJobStatusPersistable.QUEUED
+                        InpaintJobStatus.PROCESSING -> InpaintJobStatusPersistable.PROCESSING
+                        InpaintJobStatus.COMPLETED -> InpaintJobStatusPersistable.COMPLETED
+                        InpaintJobStatus.ERROR -> InpaintJobStatusPersistable.ERROR
+                    },
+                    error = it.error,
+                    resultPath = it.resultPath,
+                    maskPathList = it.maskPathList
+                )
+            }
+            JobQueueDataStore.saveJobList(context, jobs)
+        }
+    }
+
+    private fun resetEditModes(state: PhotoEditorUiState): PhotoEditorUiState {
+        Log.d(TAG, "resetEditModes: called")
+        return state.copy(
+            isResultMode = false,
+            isBrushRemoveMode = false,
+            isCropMode = false,
+            showFilterScreen = false,
+            compositeBitmap = null,
+            personBitmap = null,
+            backgroundBitmap = null,
+            showBrushSheet = false,
+            brushPathList = emptyList(),
+            redoStack = emptyList(),
+            inpaintOriginalBitmap = null,
+            inpaintOriginalBrushPathList = emptyList(),
+            inpaintPreBackend = null,
+            bitmapResult = null
+        )
+    }
+
     fun loadImage(context: Context, uri: Uri) {
         viewModelScope.launch {
+            Log.d(TAG, "loadImage: called with $uri")
             _uiState.update { resetEditModes(it).copy(isLoading = true) }
             val bmp = ImageUtils.loadBitmapFromUri(context, uri)
             _uiState.update {
@@ -107,14 +216,13 @@ class PhotoEditorViewModel : ViewModel() {
     fun clearSnackbar() = _uiState.update { it.copy(snackbarMessage = null) }
     fun setBitmap(newBitmap: Bitmap) = _uiState.update { it.copy(bitmap = newBitmap, bitmapInput = newBitmap) }
 
-    // ==== ROTATE ====
     fun rotate() {
         val bmp = _uiState.value.bitmapInput ?: _uiState.value.bitmap ?: return
         val rotated = ImageUtils.rotateBitmap(bmp, 90f)
+        Log.d(TAG, "rotate: rotating image")
         _uiState.update { resetEditModes(it).copy(bitmap = rotated, bitmapInput = rotated) }
     }
 
-    // ==== CROP ====
     fun enableCrop() = _uiState.update { it.copy(isCropMode = true) }
     fun updateCropRect(newRect: Rect) = _uiState.update { it.copy(cropRect = newRect) }
     fun updateBoxSize(newSize: IntSize) = _uiState.update { it.copy(boxSize = newSize) }
@@ -137,20 +245,26 @@ class PhotoEditorViewModel : ViewModel() {
                 androidRect.width(),
                 androidRect.height()
             )
+            Log.d(TAG, "applyCrop: crop done")
             _uiState.update { resetEditModes(it).copy(bitmap = cropped, bitmapInput = cropped, snackbarMessage = "Crop completato!") }
         } else {
             _uiState.update { it.copy(snackbarMessage = "Seleziona un'area valida!", isCropMode = false) }
         }
     }
 
-    // ==== FILTER ====
     fun showFilter() = _uiState.update { it.copy(showFilterScreen = true) }
     fun onFilterApplied(filtered: Bitmap) {
-        _uiState.update { resetEditModes(it).copy(bitmap = filtered, bitmapInput = filtered, bitmapResult = filtered, snackbarMessage = "Filtro applicato!") }
+        Log.d(TAG, "onFilterApplied: filter applied")
+        _uiState.update { resetEditModes(it).copy(
+            bitmap = filtered,
+            bitmapInput = filtered,
+            bitmapResult = filtered,
+            isResultMode = true,
+            snackbarMessage = "Filtro applicato!"
+        ) }
     }
     fun onBackFromFilter() = _uiState.update { resetEditModes(it) }
 
-    // ==== SEGMENTATION / BACKGROUND ====
     fun startSegmentPerson(context: Context, removeBgOnly: Boolean = false) {
         val bmp = _uiState.value.bitmapInput ?: _uiState.value.bitmap ?: return
         viewModelScope.launch {
@@ -159,7 +273,15 @@ class PhotoEditorViewModel : ViewModel() {
             if (segmented != null) {
                 if (removeBgOnly) {
                     val personWithAlpha = ImageUtils.extractPersonWithAlpha(bmp, segmented)
-                    _uiState.update { resetEditModes(it).copy(bitmap = personWithAlpha, bitmapInput = personWithAlpha, snackbarMessage = "Sfondo rimosso!") }
+                    _uiState.update { resetEditModes(it).copy(
+                        bitmap = personWithAlpha,
+                        bitmapInput = personWithAlpha,
+                        bitmapResult = personWithAlpha,
+                        isResultMode = true,
+                        snackbarMessage = "Sfondo rimosso!",
+                        isLoading = false,
+                        isSegmenting = false
+                    ) }
                 } else {
                     _uiState.update { it.copy(personBitmap = segmented, isSegmenting = false) }
                 }
@@ -224,7 +346,6 @@ class PhotoEditorViewModel : ViewModel() {
         _uiState.update { resetEditModes(it) }
     }
 
-    // ==== BRUSH/REMOVE ====
     fun enableBrushRemove() = _uiState.update { it.copy(isBrushRemoveMode = true, isResultMode = false, showBrushSheet = true) }
     fun disableBrushRemove() = _uiState.update { resetEditModes(it) }
 
@@ -266,7 +387,6 @@ class PhotoEditorViewModel : ViewModel() {
     fun setInpaintPrompt(prompt: String) = _uiState.update { it.copy(inpaintPrompt = prompt) }
     fun setNumInferenceSteps(steps: Int) = _uiState.update { it.copy(numInferenceSteps = steps.coerceIn(1, 50)) }
 
-    // Traduci prompt italiano -> inglese se necessario
     suspend fun translateIfNeeded(prompt: String): String {
         val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=" +
                 URLEncoder.encode(prompt, "UTF-8")
@@ -277,7 +397,7 @@ class PhotoEditorViewModel : ViewModel() {
                 val response = client.newCall(request).execute()
                 val body = response.body?.string() ?: return@withContext prompt
                 val translated = body.split("\"")[1]
-                Log.d("PHOTOEDITOR", "TRADUZIONE: estratta: $translated")
+                Log.d(TAG, "TRADUZIONE: estratta: $translated")
                 translated
             } catch (e: Exception) {
                 prompt
@@ -293,27 +413,41 @@ class PhotoEditorViewModel : ViewModel() {
             return
         }
         val maskBitmap = BrushMaskOverlayHelper.generateMaskBitmap(
-            bmp.width, bmp.height, state.brushPathList,
-            state.brushCanvasSize, state.brushImageOffset, state.brushImageSize
+            bmp.width, bmp.height, state.brushPathList
         )
-        _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch {
             when (state.removeBackend) {
                 RemoveBackend.LOCAL -> {
+                    _uiState.update { it.copy(isLoading = true) }
                     val result = ImageUtils.inpaintWithOpenCV(context, bmp, maskBitmap)
                     if (result != null) {
-                        _uiState.update { resetEditModes(it).copy(bitmap = result, bitmapResult = result, snackbarMessage = "Rimozione oggetto (locale OpenCV) completata!") }
+                        _uiState.update { it.copy(
+                            bitmap = result,
+                            bitmapResult = result,
+                            isResultMode = true,
+                            isBrushRemoveMode = false,
+                            isLoading = false,
+                            snackbarMessage = "Rimozione oggetto (locale OpenCV) completata!"
+                        ) }
                     } else {
                         _uiState.update { it.copy(snackbarMessage = "Errore rimozione locale", isLoading = false) }
                     }
                 }
                 RemoveBackend.LAMA -> {
+                    _uiState.update { it.copy(isLoading = true) }
                     ImageUtils.sendMaskAndImageToLamaCleaner(
                         context = context,
                         image = bmp,
                         mask = maskBitmap,
                         onSuccess = { result ->
-                            _uiState.update { resetEditModes(it).copy(bitmap = result, bitmapResult = result, snackbarMessage = "Oggetto rimosso (AI Lama-Cleaner)!") }
+                            _uiState.update { it.copy(
+                                bitmap = result,
+                                bitmapResult = result,
+                                isResultMode = true,
+                                isBrushRemoveMode = false,
+                                isLoading = false,
+                                snackbarMessage = "Oggetto rimosso (AI Lama-Cleaner)!"
+                            ) }
                         },
                         onError = { errorMsg ->
                             _uiState.update { it.copy(snackbarMessage = errorMsg, isLoading = false) }
@@ -321,23 +455,101 @@ class PhotoEditorViewModel : ViewModel() {
                     )
                 }
                 RemoveBackend.HUGGINGFACE -> {
-                    val originalPrompt = state.inpaintPrompt.ifBlank { "remove object" }
-                    val promptEng = translateIfNeeded(originalPrompt)
-                    ImageUtils.sendMaskAndImageToHuggingFaceInpainting(
-                        context = context,
-                        image = bmp,
-                        mask = maskBitmap,
-                        prompt = promptEng,
-                        numInferenceSteps = state.numInferenceSteps,
-                        onSuccess = { result ->
-                            _uiState.update { resetEditModes(it).copy(bitmap = result, bitmapResult = result, snackbarMessage = "Oggetto rimosso (Hugging Face)!") }
-                        },
-                        onError = { errorMsg ->
-                            _uiState.update { it.copy(snackbarMessage = errorMsg, isLoading = false) }
-                        }
-                    )
+                    val origPrompt = state.inpaintPrompt.ifBlank { "remove object" }
+                    viewModelScope.launch {
+                        val promptEng = translateIfNeeded(origPrompt)
+                        ImageUtils.submitHuggingFaceJob(
+                            context = context,
+                            image = bmp,
+                            mask = maskBitmap,
+                            prompt = promptEng,
+                            numInferenceSteps = state.numInferenceSteps,
+                            onSuccess = { jobId ->
+                                val newJob = InpaintJob(
+                                    jobId = jobId,
+                                    prompt = origPrompt,
+                                    mask = maskBitmap,
+                                    original = bmp,
+                                    status = InpaintJobStatus.QUEUED,
+                                    result = null,
+                                    error = null,
+                                    resultPath = null,
+                                    maskPathList = state.brushPathList // PATCH: salva la maschera usata
+                                )
+                                Log.d(TAG, "applyBrushRemove: append job $jobId (prompt=$origPrompt). Now ${_uiState.value.inpaintJobs.size + 1} jobs")
+                                _uiState.update { it.copy(
+                                    inpaintJobs = it.inpaintJobs + newJob,
+                                    snackbarMessage = "Job HuggingFace inviato! Apparirà nella lista job."
+                                ) }
+                                persistJobsIfNeeded(context)
+                            },
+                            onError = { errorMsg ->
+                                Log.d(TAG, "applyBrushRemove: error $errorMsg")
+                                _uiState.update { it.copy(snackbarMessage = errorMsg) }
+                            }
+                        )
+                    }
                 }
             }
+        }
+    }
+
+    fun pollHuggingFaceJob(context: Context, jobId: String) {
+        viewModelScope.launch {
+            Log.d(TAG, "pollHuggingFaceJob: polling jobId=$jobId")
+            _uiState.update { it.copy(
+                inpaintJobs = it.inpaintJobs.map {
+                    if (it.jobId == jobId) it.copy(status = InpaintJobStatus.PROCESSING) else it
+                }
+            )}
+            ImageUtils.pollHuggingFaceJobResult(
+                context = context,
+                jobId = jobId,
+                onSuccess = { resultBitmap ->
+                    val path = ImageUtils.saveJobResultBitmapToFile(context, resultBitmap, jobId)
+                    Log.d(TAG, "pollHuggingFaceJob: jobId=$jobId completed, resultPath=$path")
+                    _uiState.update { it.copy(
+                        inpaintJobs = it.inpaintJobs.map {
+                            if (it.jobId == jobId) it.copy(
+                                status = InpaintJobStatus.COMPLETED,
+                                result = resultBitmap,
+                                resultPath = path
+                            ) else it
+                        },
+                        snackbarMessage = "Risultato pronto! Premi SHOW per vedere o salvare."
+                    ) }
+                    persistJobsIfNeeded(context)
+                },
+                onError = { errorMsg ->
+                    Log.d(TAG, "pollHuggingFaceJob: error $errorMsg")
+                    _uiState.update { it.copy(
+                        inpaintJobs = it.inpaintJobs.map {
+                            if (it.jobId == jobId) it.copy(
+                                status = InpaintJobStatus.ERROR,
+                                error = errorMsg
+                            ) else it
+                        },
+                        snackbarMessage = errorMsg
+                    )}
+                    persistJobsIfNeeded(context)
+                }
+            )
+        }
+    }
+
+    // PATCH: aggiorna anche currentJobId quando carichi un job!
+    fun loadJobResultAsCurrent(job: InpaintJob) {
+        val resultBitmap = job.result ?: (job.resultPath?.let { ImageUtils.loadBitmapFromFile(it) })
+        Log.d(TAG, "loadJobResultAsCurrent: Loading result for jobId=${job.jobId}, bitmap loaded: ${resultBitmap != null}")
+        if (resultBitmap != null) {
+            _uiState.update { it.copy(
+                bitmap = resultBitmap,
+                bitmapResult = resultBitmap,
+                isResultMode = true,
+                isBrushRemoveMode = false,
+                snackbarMessage = "Risultato caricato!",
+                currentJobId = job.jobId // PATCH: salva qui il currentJobId!
+            ) }
         }
     }
 
@@ -357,6 +569,78 @@ class PhotoEditorViewModel : ViewModel() {
             }
         } else {
             _uiState.update { it.copy(snackbarMessage = "Nessuna immagine da salvare!") }
+        }
+    }
+
+    fun addJob(context: Context, job: InpaintJob) {
+        _uiState.update { it.copy(inpaintJobs = it.inpaintJobs + job) }
+        persistJobsIfNeeded(context)
+    }
+
+    fun reapplyJobWithEdit(
+        context: Context,
+        job: InpaintJob,
+        newPrompt: String,
+        newBrushList: List<Pair<List<Offset>, Float>>,
+        newSteps: Int
+    ) {
+        val bmp = job.original ?: _uiState.value.bitmapInput ?: _uiState.value.bitmap
+        if (bmp == null) {
+            showSnackbar("Bitmap originale non trovata!")
+            return
+        }
+        if (newBrushList.isEmpty()) {
+            showSnackbar("Disegna una nuova maschera!")
+            return
+        }
+        val maskBitmap = BrushMaskOverlayHelper.generateMaskBitmap(
+            bmp.width, bmp.height, newBrushList
+        )
+        viewModelScope.launch {
+            val promptEng = translateIfNeeded(newPrompt)
+            ImageUtils.submitHuggingFaceJob(
+                context = context,
+                image = bmp,
+                mask = maskBitmap,
+                prompt = promptEng,
+                numInferenceSteps = newSteps,
+                onSuccess = { jobId ->
+                    val newJob = InpaintJob(
+                        jobId = jobId,
+                        prompt = newPrompt,
+                        mask = maskBitmap,
+                        original = bmp,
+                        status = InpaintJobStatus.QUEUED,
+                        result = null,
+                        error = null,
+                        resultPath = null,
+                        maskPathList = newBrushList // PATCH: salva la nuova maschera
+                    )
+                    _uiState.update { it.copy(
+                        inpaintJobs = it.inpaintJobs + newJob,
+                        snackbarMessage = "Nuovo job inviato con le modifiche!"
+                    ) }
+                    persistJobsIfNeeded(context)
+                },
+                onError = { errorMsg ->
+                    _uiState.update { it.copy(snackbarMessage = errorMsg) }
+                }
+            )
+        }
+    }
+
+    fun saveJobResultToGallery(context: Context, job: InpaintJob) {
+        val bmp = job.result ?: job.resultPath?.let { ImageUtils.loadBitmapFromFile(it) }
+        if (bmp != null) {
+            ImageUtils.saveToGallery(context, bmp) { ok ->
+                _uiState.update {
+                    it.copy(
+                        snackbarMessage = if (ok) "Risultato salvato!" else "Errore nel salvataggio"
+                    )
+                }
+            }
+        } else {
+            _uiState.update { it.copy(snackbarMessage = "Nessun risultato da salvare!") }
         }
     }
 }

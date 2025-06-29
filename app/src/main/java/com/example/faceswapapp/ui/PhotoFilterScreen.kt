@@ -77,6 +77,15 @@ fun PhotoFilterScreen(
     var cartoonEdgeKernel by remember { mutableStateOf(filterParams[FilterType.CartoonEdgeKernel] ?: 2f) }
     var cartoonUseCanny by remember { mutableStateOf((filterParams[FilterType.CartoonUseCanny] ?: 0f) > 0.5f) }
 
+    // PATCH: Stato per modello AnimeGAN scelto
+    val animeGanModels = listOf(
+        "face_paint_512_v2_tf_nhwc_inout.tflite",
+        "celeba_distill_tf_nhwc_inout.tflite",
+        "face_paint_512_v1_tf_nhwc_inout.tflite",
+        "paprika_tf_nhwc_inout.tflite"
+    )
+    var selectedAnimeGanModel by remember { mutableStateOf(animeGanModels[0]) }
+
     fun updateAllCentersStrength(strength: Float) {
         caricatureCenters = caricatureCenters.map { it.copy(strength = strength) }
     }
@@ -94,6 +103,7 @@ fun PhotoFilterScreen(
         activeFilters,
         filterParams,
         caricatureCenters,
+        selectedAnimeGanModel, // PATCH: triggera se cambia modello
         context
     ) {
         isLoading = true
@@ -123,7 +133,8 @@ fun PhotoFilterScreen(
                 activeFilters - FilterType.Cartoon, // cartoon già applicato sopra
                 filterParams,
                 context,
-                caricatureCenters = absoluteCenters
+                caricatureCenters = absoluteCenters,
+                animeGanModelName = selectedAnimeGanModel // PATCH: passa modello selezionato
             )
         }
         filteredBitmap = result
@@ -133,10 +144,10 @@ fun PhotoFilterScreen(
     var filterPanelVisible by remember { mutableStateOf(true) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Contenitore immagine con proporzioni fisse
+        // PATCH: Uniforma il padding laterale e top come in PhotoEditorScreen
         Box(
             modifier = Modifier
-                .padding(top = 16.dp)
+                .padding(top = 16.dp, start = 24.dp, end = 24.dp)
                 .align(Alignment.TopCenter)
         ) {
             Surface(
@@ -298,7 +309,8 @@ fun PhotoFilterScreen(
                                         activeFilters - FilterType.Cartoon,
                                         filterParams,
                                         context,
-                                        caricatureCenters = absoluteCenters
+                                        caricatureCenters = absoluteCenters,
+                                        animeGanModelName = selectedAnimeGanModel // PATCH: passa modello selezionato
                                     )
                                 }
                                 finalBitmap = result
@@ -337,7 +349,9 @@ fun PhotoFilterScreen(
                         onCartoonUseCannyChange = {
                             cartoonUseCanny = it
                             filterParams = filterParams.toMutableMap().apply { put(FilterType.CartoonUseCanny, if (it) 1f else 0f) }
-                        }
+                        },
+                        animeGanModelName = selectedAnimeGanModel, // PATCH: stato scelto
+                        onAnimeGanModelChange = { selectedAnimeGanModel = it } // PATCH: update stato
                     )
                     Spacer(Modifier.height(10.dp))
                     Row {

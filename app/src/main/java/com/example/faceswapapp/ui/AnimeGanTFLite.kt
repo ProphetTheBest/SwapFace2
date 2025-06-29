@@ -9,11 +9,11 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import android.util.Log
 
-class AnimeGanTFLite(context: Context) {
+class AnimeGanTFLite(context: Context, modelName: String) {
     private val interpreter: Interpreter
 
     init {
-        val assetFileDescriptor = context.assets.openFd("face_paint_512_v2_tf_nhwc_inout.tflite")
+        val assetFileDescriptor = context.assets.openFd(modelName)
         val fileInputStream = FileInputStream(assetFileDescriptor.fileDescriptor)
         fileInputStream.channel.position(assetFileDescriptor.startOffset)
         val modelBuffer = fileInputStream.channel.map(

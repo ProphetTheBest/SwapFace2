@@ -12,7 +12,8 @@ fun applyMultipleFilters(
     activeFilters: Set<FilterType>,
     filterParams: Map<FilterType, Float>,
     context: Context,
-    caricatureCenters: List<CaricatureCenter>? = null // <-- nuovo parametro opzionale
+    caricatureCenters: List<CaricatureCenter>? = null, // <-- nuovo parametro opzionale
+    animeGanModelName: String = "face_paint_512_v2_tf_nhwc_inout.tflite" // PATCH: aggiunto parametro modello
 ): Bitmap {
     var result = bitmap
     if (activeFilters.contains(FilterType.Saturation)) {
@@ -37,7 +38,7 @@ fun applyMultipleFilters(
         result = applyCartoonOpenGL(result, context)
     }
     if (activeFilters.contains(FilterType.AnimeGAN)) {
-        result = applyAnimeGAN(result, context)
+        result = applyAnimeGAN(result, context, animeGanModelName) // PATCH: passa il modello selezionato
     }
     if (activeFilters.contains(FilterType.Caricature)) {
         // Applica la caricatura SOLO se ci sono centri inseriti dall'utente

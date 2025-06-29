@@ -54,6 +54,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import com.example.faceswapapp.ui.StickerPicker
 import com.example.faceswapapp.ui.PhotoEditorActivity
+import com.example.faceswapapp.viewmodel.InpaintJob
 
 enum class AppTheme { LIGHT, DARK, SYSTEM }
 
@@ -108,6 +109,23 @@ fun UnifiedScreen(
     var stickerToolsDialogOpen by remember { mutableStateOf(false) }
     var previewBoxWidthPx by remember { mutableStateOf(0f) }
     var previewBoxHeightPx by remember { mutableStateOf(0f) }
+
+    // PATCH: stato per mostrare il pannello JobQueue
+    var showJobQueuePanel by remember { mutableStateOf(false) }
+    // PATCH: stato per mostrare azioni su risultato job
+    var selectedJob: InpaintJob? by remember { mutableStateOf(null) }
+    var showResultActions by remember { mutableStateOf(false) }
+    var showJobEditModal by remember { mutableStateOf(false) }
+
+    // Importa il ViewModel dei job
+    val editorViewModel = remember { com.example.faceswapapp.viewmodel.PhotoEditorViewModel() }
+    val jobState by editorViewModel.uiState.collectAsState()
+    val jobContext = LocalContext.current
+
+    // PATCH: carica i job persistenti all'avvio della schermata principale
+    LaunchedEffect(Unit) {
+        editorViewModel.loadPersistentJobs(jobContext)
+    }
 
     fun mergeBitmapWithStickers(
         baseBitmap: Bitmap,
@@ -431,43 +449,61 @@ fun UnifiedScreen(
                         .padding(top = 16.dp, start = 24.dp, end = 24.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    BoxWithConstraints(
-                        modifier = Modifier
-                            .size(380.dp)
-                            .shadow(12.dp, RoundedCornerShape(32.dp))
-                            .background(Color.White, RoundedCornerShape(32.dp))
-                    ) {
-                        val density = LocalDensity.current
-                        val wPx = with(density) { maxWidth.toPx() }
-                        val hPx = with(density) { maxHeight.toPx() }
-                        LaunchedEffect(wPx, hPx) {
-                            previewBoxWidthPx = wPx
-                            previewBoxHeightPx = hPx
-                        }
-                        Box(
+                    // Begin PATCH: uniforma canvas come filterimg
+                    if (currentBitmap != null) {
+                        Surface(
+                            shape = RoundedCornerShape(32.dp),
+                            color = Color.White,
+                            shadowElevation = 12.dp,
                             modifier = Modifier
-                                .width(maxWidth)
-                                .height(maxHeight)
-                                .padding(8.dp),
-                            contentAlignment = Alignment.Center
+                                .height(380.dp)
+                                .widthIn(max = 600.dp)
+                                .aspectRatio(currentBitmap!!.width.toFloat() / currentBitmap!!.height.toFloat())
                         ) {
-                            if (currentBitmap != null && detectedLandmarks != null && currentFaceIndex in detectedLandmarks!!.indices) {
-                                StickerOverlay(
-                                    photoBitmap = currentBitmap!!,
-                                    placedStickers = placedStickers,
-                                    landmarks = detectedLandmarks!![currentFaceIndex],
-                                    imageWidth = currentBitmap!!.width,
-                                    imageHeight = currentBitmap!!.height,
-                                    showLandmarks = showLandmarks
-                                )
-                            } else if (currentBitmap != null) {
-                                Image(
-                                    bitmap = currentBitmap!!.asImageBitmap(),
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Fit
-                                )
-                            } else {
+                            Box(
+                                Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (detectedLandmarks != null && currentFaceIndex in detectedLandmarks!!.indices) {
+                                    StickerOverlay(
+                                        photoBitmap = currentBitmap!!,
+                                        placedStickers = placedStickers,
+                                        landmarks = detectedLandmarks!![currentFaceIndex],
+                                        imageWidth = currentBitmap!!.width,
+                                        imageHeight = currentBitmap!!.height,
+                                        showLandmarks = showLandmarks
+                                    )
+                                } else {
+                                    Image(
+                                        bitmap = currentBitmap!!.asImageBitmap(),
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Fit
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        BoxWithConstraints(
+                            modifier = Modifier
+                                .size(380.dp)
+                                .shadow(12.dp, RoundedCornerShape(32.dp))
+                                .background(Color.White, RoundedCornerShape(32.dp))
+                        ) {
+                            val density = LocalDensity.current
+                            val wPx = with(density) { maxWidth.toPx() }
+                            val hPx = with(density) { maxHeight.toPx() }
+                            LaunchedEffect(wPx, hPx) {
+                                previewBoxWidthPx = wPx
+                                previewBoxHeightPx = hPx
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .width(maxWidth)
+                                    .height(maxHeight)
+                                    .padding(8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 if (isProcessing) {
                                     CircularProgressIndicator(
                                         color = MaterialTheme.colorScheme.primary,
@@ -486,6 +522,7 @@ fun UnifiedScreen(
                             }
                         }
                     }
+                    // End PATCH
                 }
 
                 // BARRA PREVIEW FACCIA
@@ -732,7 +769,46 @@ fun UnifiedScreen(
                         }
                     )
                 }
-
+                /*
+                // PATCH: BOTTONI 3D EDIT/SALVA RISULTATO JOB
+                if (selectedJob != null && showResultActions) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        GradientButton(
+                            text = "Edit",
+                            gradient = Brush.horizontalGradient(
+                                colors = listOf(Color(0xFF36D1C4), Color(0xFF5B86E5))
+                            ),
+                            onClick = {
+                                showJobEditModal = true
+                                showResultActions = false
+                            },
+                            enabled = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        GradientButton(
+                            text = "Salva",
+                            gradient = Brush.horizontalGradient(
+                                colors = listOf(Color(0xFFF7971E), Color(0xFFFFD200))
+                            ),
+                            onClick = {
+                                editorViewModel.saveJobResultToGallery(context, selectedJob!!)
+                                showResultActions = false
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("Immagine salvata in Galleria!")
+                                }
+                                selectedJob = null
+                            },
+                            enabled = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                */
                 // AZIONI PRINCIPALI: bottoni in basso, equidistanti, gradient colorati chic!
                 Box(
                     modifier = Modifier
@@ -757,7 +833,7 @@ fun UnifiedScreen(
                             modifier = Modifier.weight(1f)
                         )
                         GradientButton(
-                            text = "Seleziona Immagine",
+                            text = "Swap Face",
                             gradient = Brush.horizontalGradient(
                                 colors = listOf(Color(0xFF5B86E5), Color(0xFF36D1C4))
                             ),
@@ -766,17 +842,80 @@ fun UnifiedScreen(
                             modifier = Modifier.weight(1f)
                         )
                         GradientButton(
-                            text = "Salva in Galleria",
+                            text = "Show Job",
                             gradient = Brush.horizontalGradient(
                                 colors = listOf(Color(0xFFF7971E), Color(0xFFFFD200))
                             ),
-                            onClick = { saveDialog = true },
-                            enabled = currentBitmap != null && !isProcessing,
+                            onClick = { showJobQueuePanel = true },
+                            enabled = true,
                             modifier = Modifier.weight(1f)
                         )
                     }
                 }
             }
+        }
+
+        // PATCH: Mostra JobQueue3DPanel se richiesto
+        if (showJobQueuePanel) {
+            JobQueue3DPanel(
+                jobs = jobState.inpaintJobs,
+                onShowJob = { job ->
+                    editorViewModel.loadJobResultAsCurrent(job)
+                    selectedJob = job
+                    showJobQueuePanel = false
+                    showResultActions = true
+                },
+                onDeleteJob = { job -> editorViewModel.deleteJob(jobContext, job.jobId) },
+                onPollJob = { job -> editorViewModel.pollHuggingFaceJob(jobContext, job.jobId) },
+                onAddJob = { newJob -> editorViewModel.addJob(jobContext, newJob) },
+                onDismiss = { showJobQueuePanel = false }
+            )
+        }
+
+        // PATCH: Mostra JobQueue3DPanel se richiesto
+        if (showJobQueuePanel) {
+            JobQueue3DPanel(
+                jobs = jobState.inpaintJobs,
+                onShowJob = { job ->
+                    editorViewModel.loadJobResultAsCurrent(job)
+                    // PATCH: Apri l'editor avanzato passando il path del risultato del job
+                    val intent = Intent(context, PhotoEditorActivity::class.java).apply {
+                        putExtra(PhotoEditorActivity.EXTRA_JOB_RESULT_PATH, job.resultPath ?: "")
+                    }
+                    context.startActivity(intent)
+                    showJobQueuePanel = false
+                },
+                onDeleteJob = { job -> editorViewModel.deleteJob(jobContext, job.jobId) },
+                onPollJob = { job -> editorViewModel.pollHuggingFaceJob(jobContext, job.jobId) },
+                onAddJob = { newJob -> editorViewModel.addJob(jobContext, newJob) },
+                onDismiss = { showJobQueuePanel = false }
+            )
+        }
+
+        // PATCH: Mostra modale di editing job se richiesto
+        if (showJobEditModal && selectedJob != null) {
+            JobEditModal(
+                job = selectedJob!!,
+                onApply = { prompt, brushPathList, steps ->
+                    editorViewModel.reapplyJobWithEdit(
+                        context = context,
+                        job = selectedJob!!,
+                        newPrompt = prompt,
+                        newBrushList = brushPathList,
+                        newSteps = steps
+                    )
+                    showJobEditModal = false
+                    selectedJob = null
+                },
+                onSave = {
+                    showJobEditModal = false
+                    selectedJob = null
+                },
+                onCancel = {
+                    showJobEditModal = false
+                    selectedJob = null
+                }
+            )
         }
 
         if (errorDialog && errorMessage != null) {

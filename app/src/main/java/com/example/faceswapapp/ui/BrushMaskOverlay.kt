@@ -47,7 +47,23 @@ fun BrushMaskOverlay(
         onImageBoxChanged(left, top, drawnW, drawnH)
     }
 
-    // Helper per confinare le path all'immagine effettiva
+    // Conversione punti da coordinate bitmap a coordinate pannello
+    fun bitmapToCanvas(points: List<Offset>): List<Offset> =
+        points.map { p ->
+            val relX = p.x / bmpW
+            val relY = p.y / bmpH
+            Offset(left + relX * drawnW, top + relY * drawnH)
+        }
+
+    // Conversione punti da canvas a bitmap, per salvare i tratti in coordinate bitmap
+    fun canvasToBitmap(points: List<Offset>): List<Offset> =
+        points.map { p ->
+            val relX = ((p.x - left) / drawnW).coerceIn(0f, 1f)
+            val relY = ((p.y - top) / drawnH).coerceIn(0f, 1f)
+            Offset(relX * bmpW, relY * bmpH)
+        }
+
+    // Helper per confinare le path all'immagine effettiva (in canvas space)
     fun confineToRect(points: List<Offset>): List<Offset> =
         points.filter { it.x in left..right && it.y in top..bottom }
 
@@ -69,7 +85,10 @@ fun BrushMaskOverlay(
                     },
                     onDragEnd = {
                         val filtered = confineToRect(currentStroke)
-                        if (filtered.size >= 2) onPathAdded(filtered, brushSize)
+                        if (filtered.size >= 2) {
+                            val bitmapPoints = canvasToBitmap(filtered)
+                            onPathAdded(bitmapPoints, brushSize)
+                        }
                         currentStroke = emptyList()
                     },
                     onDragCancel = { currentStroke = emptyList() }
@@ -84,22 +103,22 @@ fun BrushMaskOverlay(
             style = Stroke(width = 3f)
         )
 
-        // Path completate
+        // Path completate (maschera caricata, in coordinate bitmap)
         brushPathList.forEach { (points, thickness) ->
-            val filtered = confineToRect(points)
-            if (filtered.size >= 2) {
+            val scaled = bitmapToCanvas(points)
+            if (scaled.size >= 2) {
                 val path = Path().apply {
-                    moveTo(filtered[0].x, filtered[0].y)
-                    filtered.drop(1).forEach { lineTo(it.x, it.y) }
+                    moveTo(scaled[0].x, scaled[0].y)
+                    scaled.drop(1).forEach { lineTo(it.x, it.y) }
                 }
                 drawPath(
                     path = path,
                     color = Color.Green.copy(alpha = 0.5f),
-                    style = Stroke(width = thickness)
+                    style = Stroke(width = thickness * scale)
                 )
             }
         }
-        // Path corrente
+        // Path corrente (in coordinate canvas)
         val filteredCurrent = confineToRect(currentStroke)
         if (filteredCurrent.size >= 2) {
             val path = Path().apply {
