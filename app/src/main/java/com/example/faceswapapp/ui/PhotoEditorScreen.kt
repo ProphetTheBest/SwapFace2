@@ -42,7 +42,7 @@ private const val TAG = "FSWAPTRACE"
 @Composable
 fun PhotoEditorScreen(
     imageUri: Uri? = null, // PATCH: accetta anche null
-    editorViewModel: PhotoEditorViewModel = viewModel(),
+    editorViewModel: PhotoEditorViewModel,
     onBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -54,6 +54,27 @@ fun PhotoEditorScreen(
     // PATCH: Stato per modale di editing/riapplica job completato
     var showJobEditModal by remember { mutableStateOf(false) }
     var jobToEdit by remember { mutableStateOf<InpaintJob?>(null) }
+
+    // --- PATCH: Recupera jobId e resultPath dall'Intent e aggiorna lo stato ---
+    val activity = context as? android.app.Activity
+    val jobId = activity?.intent?.getStringExtra(PhotoEditorActivity.EXTRA_JOB_ID)
+    val resultPath = activity?.intent?.getStringExtra(PhotoEditorActivity.EXTRA_JOB_RESULT_PATH)
+    LaunchedEffect(jobId, resultPath) {
+        if (jobId != null) {
+            editorViewModel.setCurrentJobId(jobId)
+        }
+        if (resultPath != null && resultPath.isNotBlank()) {
+            editorViewModel.loadJobResultByPath(resultPath)
+        }
+    }
+    // --- FINE PATCH ---
+
+    // PATCH: Aggiorna la lista job OGNI volta che il pannello viene aperto
+    LaunchedEffect(showJobQueuePanel) {
+        if (showJobQueuePanel) {
+            editorViewModel.loadPersistentJobs(context)
+        }
+    }
 
     val backgroundGalleryPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -133,6 +154,7 @@ fun PhotoEditorScreen(
             onDismiss = { showJobQueuePanel = false },
             onShowJob = { job ->
                 editorViewModel.loadJobResultAsCurrent(job)
+                editorViewModel.setCurrentJobId(job.jobId)
                 Log.d(TAG, "PhotoEditorScreen: onShowJob for jobId=${job.jobId}")
                 // PATCH: invece di caricare subito il risultato, apri la modale di editing
                 showJobEditModal = true
@@ -141,6 +163,8 @@ fun PhotoEditorScreen(
             },
             onDeleteJob = { job ->
                 editorViewModel.deleteJob(context, job.jobId)
+                // PATCH: dopo una delete, aggiorna la lista dal DataStore
+                editorViewModel.loadPersistentJobs(context)
             },
             onPollJob = { job ->
                 Log.d(TAG, "PhotoEditorScreen: onPollJob for jobId=${job.jobId}")

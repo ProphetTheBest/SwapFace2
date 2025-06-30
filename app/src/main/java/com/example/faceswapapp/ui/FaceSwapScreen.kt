@@ -810,6 +810,9 @@ fun UnifiedScreen(
                 }
                 */
                 // AZIONI PRINCIPALI: bottoni in basso, equidistanti, gradient colorati chic!
+                // ... codice precedente invariato ...
+
+// AZIONI PRINCIPALI: bottoni in basso, equidistanti, gradient colorati chic!
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -846,7 +849,11 @@ fun UnifiedScreen(
                             gradient = Brush.horizontalGradient(
                                 colors = listOf(Color(0xFFF7971E), Color(0xFFFFD200))
                             ),
-                            onClick = { showJobQueuePanel = true },
+                            onClick = {
+                                // PATCH: Forza reload lista job dal DataStore prima di mostrare il pannello
+                                editorViewModel.loadPersistentJobs(jobContext)
+                                showJobQueuePanel = true
+                            },
                             enabled = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -860,7 +867,7 @@ fun UnifiedScreen(
             JobQueue3DPanel(
                 jobs = jobState.inpaintJobs,
                 onShowJob = { job ->
-                    editorViewModel.loadJobResultAsCurrent(job)
+                    //editorViewModel.loadJobResultAsCurrent(job)
                     selectedJob = job
                     showJobQueuePanel = false
                     showResultActions = true
@@ -877,9 +884,10 @@ fun UnifiedScreen(
             JobQueue3DPanel(
                 jobs = jobState.inpaintJobs,
                 onShowJob = { job ->
-                    editorViewModel.loadJobResultAsCurrent(job)
+                    //editorViewModel.loadJobResultAsCurrent(job)
                     // PATCH: Apri l'editor avanzato passando il path del risultato del job
                     val intent = Intent(context, PhotoEditorActivity::class.java).apply {
+                        putExtra(PhotoEditorActivity.EXTRA_JOB_ID, job.jobId)
                         putExtra(PhotoEditorActivity.EXTRA_JOB_RESULT_PATH, job.resultPath ?: "")
                     }
                     context.startActivity(intent)

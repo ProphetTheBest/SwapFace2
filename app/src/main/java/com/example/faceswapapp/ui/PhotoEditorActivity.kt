@@ -5,14 +5,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.example.faceswapapp.viewmodel.PhotoEditorViewModel
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.activity.viewModels
 
 class PhotoEditorActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_IMAGE_URI = "image_uri"
         const val EXTRA_JOB_RESULT_PATH = "JOB_RESULT_PATH"
+        const val EXTRA_JOB_ID = "extra_job_id"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -20,20 +20,24 @@ class PhotoEditorActivity : ComponentActivity() {
         val uriString = intent.getStringExtra(EXTRA_IMAGE_URI)
         val jobResultPath = intent.getStringExtra(EXTRA_JOB_RESULT_PATH)
 
-        setContent {
-            val editorViewModel = remember { PhotoEditorViewModel() }
+        val editorViewModel: PhotoEditorViewModel by viewModels()
 
-            // Se viene passato un risultato job, caricalo all'avvio tramite il ViewModel
-            LaunchedEffect(jobResultPath) {
+        setContent {
+            // Forza SEMPRE il reload della job list dal DataStore quando parte la schermata!
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                editorViewModel.loadPersistentJobs(applicationContext)
+            }
+
+            // Se viene passato il path di un risultato, caricalo all'avvio.
+            androidx.compose.runtime.LaunchedEffect(jobResultPath) {
                 if (!jobResultPath.isNullOrEmpty()) {
                     editorViewModel.loadJobResultByPath(jobResultPath)
                 }
             }
 
-            // Se c'è una imageUri usala, altrimenti lascia null (verrà già caricato dal ViewModel se job)
             PhotoEditorScreen(
                 imageUri = uriString?.let { Uri.parse(it) },
-                editorViewModel = editorViewModel // PATCH: usa il nome parametro giusto!
+                editorViewModel = editorViewModel
             )
         }
     }

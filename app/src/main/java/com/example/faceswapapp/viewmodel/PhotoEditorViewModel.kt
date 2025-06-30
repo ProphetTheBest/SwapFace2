@@ -76,19 +76,25 @@ data class PhotoEditorUiState(
     val inpaintOriginalBrushPathList: List<Pair<List<Offset>, Float>> = emptyList(),
     val inpaintPreBackend: RemoveBackend? = null,
     val inpaintJobs: List<InpaintJob> = emptyList(),
-    val currentJobId: String? = null // PATCH: campo per il job selezionato
+    val currentJobId: String? = null,
+    val isJobListLoading: Boolean = false // PATCH PER DEBUG
 )
 
 class PhotoEditorViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(PhotoEditorUiState())
     val uiState: StateFlow<PhotoEditorUiState> = _uiState
 
+    init {
+        Log.d(TAG, "PhotoEditorViewModel CREATO - HASH: ${this.hashCode()}")
+    }
+
     // PATCH: funzione per cancellare un job dalla lista
     fun deleteJob(context: Context, jobId: String) {
+        Log.d(TAG, "deleteJob - HASH: ${this.hashCode()}")
         viewModelScope.launch {
             val newJobs = _uiState.value.inpaintJobs.filter { it.jobId != jobId }
-            _uiState.update { it.copy(inpaintJobs = newJobs) }
-            // aggiorna il DataStore
+            val newCurrentJobId = if (_uiState.value.currentJobId == jobId) null else _uiState.value.currentJobId
+            _uiState.update { it.copy(inpaintJobs = newJobs, currentJobId = newCurrentJobId) }
             val jobsPersistable = newJobs.map {
                 InpaintJobPersistable(
                     jobId = it.jobId,
@@ -105,32 +111,37 @@ class PhotoEditorViewModel : ViewModel() {
                 )
             }
             JobQueueDataStore.saveJobList(context, jobsPersistable)
+            loadPersistentJobs(context)
         }
     }
 
-    // PATCH: nuova funzione per impostare il job corrente
     fun setCurrentJobId(jobId: String?) {
-        Log.d("DEBUG_BUTTON", "Imposto currentJobId = $jobId")
+        Log.d(TAG, "Imposto currentJobId = $jobId - HASH: ${this.hashCode()}")
         _uiState.update { it.copy(currentJobId = jobId) }
     }
 
-    // PATCH: Carica il risultato di un job dato un path
     fun loadJobResultByPath(resultPath: String) {
-        val resultBitmap = com.example.faceswapapp.utils.ImageUtils.loadBitmapFromFile(resultPath)
-        if (resultBitmap != null) {
-            _uiState.update { it.copy(
-                bitmap = resultBitmap,
-                bitmapResult = resultBitmap,
-                isResultMode = true,
-                isBrushRemoveMode = false,
-                snackbarMessage = "Risultato job caricato!"
-            ) }
+        val bitmap = ImageUtils.loadBitmapFromFile(resultPath)
+        if (bitmap != null) {
+            _uiState.update {
+                it.copy(
+                    bitmap = bitmap,
+                    bitmapResult = bitmap,
+                    isResultMode = true,
+                    isBrushRemoveMode = false,
+                    snackbarMessage = "Risultato caricato!"
+                    // currentJobId viene già settato sopra!
+                )
+            }
         }
     }
 
     fun loadPersistentJobs(context: Context) {
         viewModelScope.launch {
+            Log.d(TAG, "ViewModel LOAD JOBS - HASH: ${this@PhotoEditorViewModel.hashCode()}")
+            _uiState.update { it.copy(isJobListLoading = true) }
             val jobList = JobQueueDataStore.loadJobList(context)
+            Log.d(TAG, "Job list caricata: ${jobList.joinToString { it.jobId }}")
             val jobs = jobList.map {
                 val resultBitmap = it.resultPath?.let { path -> ImageUtils.loadBitmapFromFile(path) }
                 InpaintJob(
@@ -150,7 +161,8 @@ class PhotoEditorViewModel : ViewModel() {
                     maskPathList = it.maskPathList
                 )
             }
-            _uiState.update { it.copy(inpaintJobs = jobs) }
+            Log.d(TAG, "Aggiorno stato UI con ${jobs.size} job")
+            _uiState.update { it.copy(inpaintJobs = jobs, isJobListLoading = false) }
         }
     }
 
@@ -196,8 +208,8 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     fun loadImage(context: Context, uri: Uri) {
+        Log.d(TAG, "loadImage: called with $uri - HASH: ${this.hashCode()}")
         viewModelScope.launch {
-            Log.d(TAG, "loadImage: called with $uri")
             _uiState.update { resetEditModes(it).copy(isLoading = true) }
             val bmp = ImageUtils.loadBitmapFromUri(context, uri)
             _uiState.update {
@@ -217,9 +229,9 @@ class PhotoEditorViewModel : ViewModel() {
     fun setBitmap(newBitmap: Bitmap) = _uiState.update { it.copy(bitmap = newBitmap, bitmapInput = newBitmap) }
 
     fun rotate() {
+        Log.d(TAG, "rotate - HASH: ${this.hashCode()}")
         val bmp = _uiState.value.bitmapInput ?: _uiState.value.bitmap ?: return
         val rotated = ImageUtils.rotateBitmap(bmp, 90f)
-        Log.d(TAG, "rotate: rotating image")
         _uiState.update { resetEditModes(it).copy(bitmap = rotated, bitmapInput = rotated) }
     }
 
@@ -227,6 +239,7 @@ class PhotoEditorViewModel : ViewModel() {
     fun updateCropRect(newRect: Rect) = _uiState.update { it.copy(cropRect = newRect) }
     fun updateBoxSize(newSize: IntSize) = _uiState.update { it.copy(boxSize = newSize) }
     fun applyCrop() {
+        Log.d(TAG, "applyCrop - HASH: ${this.hashCode()}")
         val bmp = _uiState.value.bitmapInput ?: _uiState.value.bitmap ?: return
         val cropRect = _uiState.value.cropRect
         val boxSize = _uiState.value.boxSize
@@ -245,7 +258,6 @@ class PhotoEditorViewModel : ViewModel() {
                 androidRect.width(),
                 androidRect.height()
             )
-            Log.d(TAG, "applyCrop: crop done")
             _uiState.update { resetEditModes(it).copy(bitmap = cropped, bitmapInput = cropped, snackbarMessage = "Crop completato!") }
         } else {
             _uiState.update { it.copy(snackbarMessage = "Seleziona un'area valida!", isCropMode = false) }
@@ -254,7 +266,7 @@ class PhotoEditorViewModel : ViewModel() {
 
     fun showFilter() = _uiState.update { it.copy(showFilterScreen = true) }
     fun onFilterApplied(filtered: Bitmap) {
-        Log.d(TAG, "onFilterApplied: filter applied")
+        Log.d(TAG, "onFilterApplied: filter applied - HASH: ${this.hashCode()}")
         _uiState.update { resetEditModes(it).copy(
             bitmap = filtered,
             bitmapInput = filtered,
@@ -266,6 +278,7 @@ class PhotoEditorViewModel : ViewModel() {
     fun onBackFromFilter() = _uiState.update { resetEditModes(it) }
 
     fun startSegmentPerson(context: Context, removeBgOnly: Boolean = false) {
+        Log.d(TAG, "startSegmentPerson - HASH: ${this.hashCode()}")
         val bmp = _uiState.value.bitmapInput ?: _uiState.value.bitmap ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isSegmenting = true) }
@@ -292,6 +305,7 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     fun startSegmentPersonAndShowBackgroundDialog(context: Context) {
+        Log.d(TAG, "startSegmentPersonAndShowBackgroundDialog - HASH: ${this.hashCode()}")
         val bmp = _uiState.value.bitmapInput ?: _uiState.value.bitmap ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isSegmenting = true) }
@@ -305,14 +319,17 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     fun setBackgroundBitmap(background: Bitmap?) {
+        Log.d(TAG, "setBackgroundBitmap - HASH: ${this.hashCode()}")
         _uiState.update { it.copy(backgroundBitmap = background) }
         tryComposite()
     }
     fun showBackgroundDialog(show: Boolean) {
+        Log.d(TAG, "showBackgroundDialog($show) - HASH: ${this.hashCode()}")
         _uiState.update { it.copy(showBackgroundDialog = show) }
     }
 
     fun setBackgroundImageFromUri(context: Context, uri: Uri) {
+        Log.d(TAG, "setBackgroundImageFromUri - HASH: ${this.hashCode()}")
         viewModelScope.launch {
             val bitmap = ImageUtils.loadBitmapFromUri(context, uri)
             if (bitmap != null) {
@@ -325,6 +342,7 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     private fun tryComposite() {
+        Log.d(TAG, "tryComposite - HASH: ${this.hashCode()}")
         val mask = _uiState.value.personBitmap
         val bg = _uiState.value.backgroundBitmap
         val original = _uiState.value.bitmapInput ?: _uiState.value.bitmap
@@ -339,10 +357,12 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     fun applyCompositing() {
+        Log.d(TAG, "applyCompositing - HASH: ${this.hashCode()}")
         val composite = _uiState.value.compositeBitmap ?: return
         _uiState.update { resetEditModes(it).copy(bitmap = composite, bitmapInput = composite, snackbarMessage = "Sfondo applicato!") }
     }
     fun cancelCompositing() {
+        Log.d(TAG, "cancelCompositing - HASH: ${this.hashCode()}")
         _uiState.update { resetEditModes(it) }
     }
 
@@ -406,6 +426,7 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     fun applyBrushRemove(context: Context) {
+        Log.d(TAG, "applyBrushRemove - HASH: ${this.hashCode()}")
         val state = _uiState.value
         val bmp = state.bitmapInput ?: state.bitmap ?: return
         if (state.brushPathList.isEmpty()) {
@@ -482,6 +503,7 @@ class PhotoEditorViewModel : ViewModel() {
                                     snackbarMessage = "Job HuggingFace inviato! Apparirà nella lista job."
                                 ) }
                                 persistJobsIfNeeded(context)
+                                loadPersistentJobs(context)
                             },
                             onError = { errorMsg ->
                                 Log.d(TAG, "applyBrushRemove: error $errorMsg")
@@ -495,8 +517,8 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     fun pollHuggingFaceJob(context: Context, jobId: String) {
+        Log.d(TAG, "pollHuggingFaceJob - HASH: ${this.hashCode()}")
         viewModelScope.launch {
-            Log.d(TAG, "pollHuggingFaceJob: polling jobId=$jobId")
             _uiState.update { it.copy(
                 inpaintJobs = it.inpaintJobs.map {
                     if (it.jobId == jobId) it.copy(status = InpaintJobStatus.PROCESSING) else it
@@ -519,6 +541,7 @@ class PhotoEditorViewModel : ViewModel() {
                         snackbarMessage = "Risultato pronto! Premi SHOW per vedere o salvare."
                     ) }
                     persistJobsIfNeeded(context)
+                    loadPersistentJobs(context)
                 },
                 onError = { errorMsg ->
                     Log.d(TAG, "pollHuggingFaceJob: error $errorMsg")
@@ -532,13 +555,14 @@ class PhotoEditorViewModel : ViewModel() {
                         snackbarMessage = errorMsg
                     )}
                     persistJobsIfNeeded(context)
+                    loadPersistentJobs(context)
                 }
             )
         }
     }
 
-    // PATCH: aggiorna anche currentJobId quando carichi un job!
     fun loadJobResultAsCurrent(job: InpaintJob) {
+        Log.d(TAG, "loadJobResultAsCurrent - HASH: ${this.hashCode()}")
         val resultBitmap = job.result ?: (job.resultPath?.let { ImageUtils.loadBitmapFromFile(it) })
         Log.d(TAG, "loadJobResultAsCurrent: Loading result for jobId=${job.jobId}, bitmap loaded: ${resultBitmap != null}")
         if (resultBitmap != null) {
@@ -548,7 +572,7 @@ class PhotoEditorViewModel : ViewModel() {
                 isResultMode = true,
                 isBrushRemoveMode = false,
                 snackbarMessage = "Risultato caricato!",
-                currentJobId = job.jobId // PATCH: salva qui il currentJobId!
+                currentJobId = job.jobId
             ) }
         }
     }
@@ -556,6 +580,7 @@ class PhotoEditorViewModel : ViewModel() {
     fun restoreBrushEditing() = _uiState.update { it.copy(bitmap = it.bitmapInput, isBrushRemoveMode = true, isResultMode = false) }
 
     fun save(context: Context) {
+        Log.d(TAG, "save - HASH: ${this.hashCode()}")
         val bmp = _uiState.value.bitmapResult ?: _uiState.value.bitmapInput ?: _uiState.value.bitmap
         if (bmp != null) {
             ImageUtils.saveToGallery(context, bmp) { ok ->
@@ -573,8 +598,10 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     fun addJob(context: Context, job: InpaintJob) {
+        Log.d(TAG, "addJob - HASH: ${this.hashCode()}")
         _uiState.update { it.copy(inpaintJobs = it.inpaintJobs + job) }
         persistJobsIfNeeded(context)
+        loadPersistentJobs(context)
     }
 
     fun reapplyJobWithEdit(
@@ -584,6 +611,7 @@ class PhotoEditorViewModel : ViewModel() {
         newBrushList: List<Pair<List<Offset>, Float>>,
         newSteps: Int
     ) {
+        Log.d(TAG, "reapplyJobWithEdit - HASH: ${this.hashCode()}")
         val bmp = job.original ?: _uiState.value.bitmapInput ?: _uiState.value.bitmap
         if (bmp == null) {
             showSnackbar("Bitmap originale non trovata!")
@@ -614,13 +642,14 @@ class PhotoEditorViewModel : ViewModel() {
                         result = null,
                         error = null,
                         resultPath = null,
-                        maskPathList = newBrushList // PATCH: salva la nuova maschera
+                        maskPathList = newBrushList
                     )
                     _uiState.update { it.copy(
                         inpaintJobs = it.inpaintJobs + newJob,
                         snackbarMessage = "Nuovo job inviato con le modifiche!"
                     ) }
                     persistJobsIfNeeded(context)
+                    loadPersistentJobs(context)
                 },
                 onError = { errorMsg ->
                     _uiState.update { it.copy(snackbarMessage = errorMsg) }
@@ -630,6 +659,7 @@ class PhotoEditorViewModel : ViewModel() {
     }
 
     fun saveJobResultToGallery(context: Context, job: InpaintJob) {
+        Log.d(TAG, "saveJobResultToGallery - HASH: ${this.hashCode()}")
         val bmp = job.result ?: job.resultPath?.let { ImageUtils.loadBitmapFromFile(it) }
         if (bmp != null) {
             ImageUtils.saveToGallery(context, bmp) { ok ->
