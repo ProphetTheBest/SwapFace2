@@ -550,201 +550,39 @@ fun UnifiedScreen(
                     }
                 }
 
-                // BARRA STICKER: evidenzia quello attivo
+                // BARRA STICKER: estratta in composable dedicato per migliorare la manutenibilità
                 if (detectedLandmarks != null && currentFaceIndex in detectedLandmarks!!.indices && (placedStickers.isNotEmpty() || currentBitmap != null)) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        tonalElevation = 2.dp,
-                        shape = RoundedCornerShape(24.dp),
+                    StickerBar(
+                        placedStickers = placedStickers,
+                        selectedStickerIndex = selectedStickerIndex,
+                        onSelectSticker = ::selectSticker,
+                        onAddSticker = { stickerPickerOpen = true },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 4.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                .horizontalScroll(rememberScrollState()),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Sticker:", modifier = Modifier.padding(end = 8.dp))
-                            placedStickers.forEachIndexed { idx, sticker ->
-                                Surface(
-                                    modifier = Modifier
-                                        .padding(horizontal = 4.dp)
-                                        .size(56.dp)
-                                        .border(
-                                            border = BorderStroke(
-                                                if (idx == selectedStickerIndex) 3.dp else 1.dp,
-                                                if (idx == selectedStickerIndex) MaterialTheme.colorScheme.primary else Color.LightGray
-                                            ),
-                                            shape = CircleShape
-                                        )
-                                        .clickable { selectSticker(idx) },
-                                    shape = CircleShape,
-                                    color = if (idx == selectedStickerIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                    ) {
-                                        Image(
-                                            painter = painterResource(id = sticker.sticker.resId),
-                                            contentDescription = sticker.sticker.label,
-                                            modifier = Modifier.size(36.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            Button(onClick = { stickerPickerOpen = true }) {
-                                Text("Aggiungi Sticker")
-                            }
-                        }
-                    }
+                    )
                 }
 
-                // PATCHED STICKER TOOLS PANEL (android-only, no desktop scrollbar, fade indicator)
+                // PANNELLO STRUMENTI STICKER: estratto in composable dedicato per migliorare la manutenibilità
                 if (selectedSticker != null && stickerToolsDialogOpen) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .zIndex(1f)
-                    ) {
-                        val scrollState = rememberScrollState()
-                        Surface(
-                            modifier = Modifier
-                                .offset { IntOffset(popupOffsetX.roundToInt(), popupOffsetY.roundToInt() - 80) }
-                                .widthIn(min = 340.dp, max = 400.dp)
-                                .heightIn(min = 380.dp, max = 540.dp)
-                                .align(Alignment.TopCenter)
-                                .shadow(12.dp, RoundedCornerShape(20.dp))
-                                .pointerInput(Unit) {
-                                    detectDragGestures { change, dragAmount ->
-                                        change.consumeAllChanges()
-                                        popupOffsetX = (popupOffsetX + dragAmount.x)
-                                        popupOffsetY = (popupOffsetY + dragAmount.y)
-                                    }
-                                },
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-                            tonalElevation = 8.dp,
-                            shape = RoundedCornerShape(20.dp),
-                            border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                        ) {
-                            Box {
-                                Column(
-                                    Modifier
-                                        .padding(14.dp)
-                                        .widthIn(min = 340.dp, max = 380.dp)
-                                        .verticalScroll(scrollState)
-                                ) {
-                                    Text(
-                                        text = "Scorri verso il basso per più opzioni",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(bottom = 8.dp),
-                                        textAlign = TextAlign.Center,
-                                        color = Color.Gray
-                                    )
-                                    Row(
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .height(36.dp)
-                                            .pointerInput(Unit) {
-                                                detectDragGestures { change, dragAmount ->
-                                                    change.consumeAllChanges()
-                                                    popupOffsetX = (popupOffsetX + dragAmount.x)
-                                                    popupOffsetY = (popupOffsetY + dragAmount.y)
-                                                }
-                                            },
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            "Strumenti Sticker: ${selectedSticker.sticker.label}",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        IconButton(onClick = { stickerToolsDialogOpen = false }) {
-                                            Icon(Icons.Filled.Info, contentDescription = "Chiudi")
-                                        }
-                                    }
-                                    Divider(Modifier.padding(vertical = 6.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                                        Text("X:", Modifier.width(32.dp))
-                                        Slider(
-                                            value = selectedSticker.x,
-                                            onValueChange = { updateSelectedSticker(x = it) },
-                                            valueRange = -200f..200f,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                                        )
-                                        Text(selectedSticker.x.toInt().toString(), Modifier.width(42.dp), textAlign = TextAlign.End)
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                                        Text("Y:", Modifier.width(32.dp))
-                                        Slider(
-                                            value = selectedSticker.y,
-                                            onValueChange = { updateSelectedSticker(y = it) },
-                                            valueRange = -200f..200f,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                                        )
-                                        Text(selectedSticker.y.toInt().toString(), Modifier.width(42.dp), textAlign = TextAlign.End)
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                                        Text("Scala", Modifier.width(48.dp))
-                                        Slider(
-                                            value = selectedSticker.scale,
-                                            onValueChange = { updateSelectedSticker(scale = it) },
-                                            valueRange = 0.2f..3.0f,
-                                            steps = 18,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                                        )
-                                        Text("${"%.2f".format(selectedSticker.scale)}x", Modifier.width(48.dp), textAlign = TextAlign.End)
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                                        Text("Rot:", Modifier.width(48.dp))
-                                        Slider(
-                                            value = selectedSticker.rotation,
-                                            onValueChange = { updateSelectedSticker(rot = it) },
-                                            valueRange = -180f..180f,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                                        )
-                                        Text("${selectedSticker.rotation.toInt()}°", Modifier.width(48.dp), textAlign = TextAlign.End)
-                                    }
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                                    ) {
-                                        Button(
-                                            onClick = { resetSelectedSticker() },
-                                            modifier = Modifier.weight(1f)
-                                        ) { Text("Reset") }
-                                        Button(
-                                            onClick = {
-                                                selectedStickerIndex?.let { idx ->
-                                                    removeSticker(idx)
-                                                    stickerToolsDialogOpen = false
-                                                }
-                                            },
-                                            modifier = Modifier.weight(1f)
-                                        ) { Text("Elimina") }
-                                    }
-                                }
-                                // Fade trasparente in basso per suggerire lo scroll
-                                Box(
-                                    Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .fillMaxWidth()
-                                        .height(24.dp)
-                                        .background(
-                                            Brush.verticalGradient(
-                                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.10f))
-                                            )
-                                        )
-                                )
+                    StickerToolsPanel(
+                        selectedSticker = selectedSticker,
+                        popupOffsetX = popupOffsetX,
+                        popupOffsetY = popupOffsetY,
+                        onOffsetChange = { newX, newY ->
+                            popupOffsetX = newX
+                            popupOffsetY = newY
+                        },
+                        onUpdateSticker = ::updateSelectedSticker,
+                        onResetSticker = ::resetSelectedSticker,
+                        onRemoveSticker = {
+                            selectedStickerIndex?.let { idx ->
+                                removeSticker(idx)
+                                stickerToolsDialogOpen = false
                             }
-                        }
-                    }
+                        },
+                        onClose = { stickerToolsDialogOpen = false }
+                    )
                 }
 
                 if (stickerPickerOpen) {
