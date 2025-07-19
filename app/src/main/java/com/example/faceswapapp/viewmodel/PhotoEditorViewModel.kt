@@ -21,6 +21,12 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
+import okhttp3.RequestBody
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
+import java.io.File
+import androidx.core.content.FileProvider
+import android.content.Intent
 
 private val TAG = "FSWAPTRACE"
 
@@ -419,6 +425,33 @@ class PhotoEditorViewModel : ViewModel() {
                 val translated = body.split("\"")[1]
                 Log.d(TAG, "TRADUZIONE: estratta: $translated")
                 translated
+            } catch (e: Exception) {
+                prompt
+            }
+        }
+    }
+
+    suspend fun translateLibre(prompt: String): String {
+        val url = "https://libretranslate.com/translate"
+        val json = """
+        {
+          "q": "${prompt.replace("\"", "\\\"")}",
+          "source": "it",
+          "target": "en",
+          "format": "text"
+        }
+    """.trimIndent()
+        return withContext(Dispatchers.IO) {
+            try {
+                val client = OkHttpClient()
+                val body = RequestBody.create("application/json".toMediaType(), json)
+                val request = Request.Builder().url(url).post(body).build()
+                val response = client.newCall(request).execute()
+                val respBody = response.body?.string() ?: return@withContext prompt
+                // Estrai "translatedText" dal JSON
+                val regex = """"translatedText"\s*:\s*"([^"]+)"""".toRegex()
+                val match = regex.find(respBody)
+                match?.groups?.get(1)?.value ?: prompt
             } catch (e: Exception) {
                 prompt
             }

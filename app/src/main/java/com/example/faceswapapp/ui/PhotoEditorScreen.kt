@@ -1,5 +1,6 @@
 package com.example.faceswapapp.ui
 
+import android.content.Context
 import android.util.Log
 import android.net.Uri
 import android.graphics.Bitmap
@@ -18,31 +19,27 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import com.example.faceswapapp.viewmodel.PhotoEditorViewModel
-import com.example.faceswapapp.viewmodel.InpaintJobStatus
 import com.example.faceswapapp.viewmodel.InpaintJob
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.draw.shadow
 import com.example.faceswapapp.utils.ImageUtils
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
 import androidx.compose.ui.graphics.Brush
+import java.io.File
+import java.io.FileOutputStream
 
 private const val TAG = "FSWAPTRACE"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotoEditorScreen(
-    imageUri: Uri? = null, // PATCH: accetta anche null
+    imageUri: Uri? = null,
     editorViewModel: PhotoEditorViewModel,
+    onShare: (File?) -> Unit,
     onBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -50,12 +47,9 @@ fun PhotoEditorScreen(
     val coroutineScope = rememberCoroutineScope()
     var photoUriForCamera by remember { mutableStateOf<Uri?>(null) }
     var showJobQueuePanel by remember { mutableStateOf(false) }
-
-    // PATCH: Stato per modale di editing/riapplica job completato
     var showJobEditModal by remember { mutableStateOf(false) }
     var jobToEdit by remember { mutableStateOf<InpaintJob?>(null) }
 
-    // --- PATCH: Recupera jobId e resultPath dall'Intent e aggiorna lo stato ---
     val activity = context as? android.app.Activity
     val jobId = activity?.intent?.getStringExtra(PhotoEditorActivity.EXTRA_JOB_ID)
     val resultPath = activity?.intent?.getStringExtra(PhotoEditorActivity.EXTRA_JOB_RESULT_PATH)
@@ -67,9 +61,7 @@ fun PhotoEditorScreen(
             editorViewModel.loadJobResultByPath(resultPath)
         }
     }
-    // --- FINE PATCH ---
 
-    // PATCH: Aggiorna la lista job OGNI volta che il pannello viene aperto
     LaunchedEffect(showJobQueuePanel) {
         if (showJobQueuePanel) {
             editorViewModel.loadPersistentJobs(context)
@@ -104,13 +96,11 @@ fun PhotoEditorScreen(
         }
     }
 
-    // PATCH: carica sempre i job persistenti ad ogni apertura schermata (e logga!)
     LaunchedEffect(true) {
         Log.d(TAG, "PhotoEditorScreen: calling loadPersistentJobs")
         editorViewModel.loadPersistentJobs(context)
     }
 
-    // PATCH: carica l'immagine SOLO se imageUri è non null (così non sovrascrive il risultato di un job)
     LaunchedEffect(imageUri) {
         if (imageUri != null) {
             editorViewModel.loadImage(context, imageUri)
@@ -127,20 +117,36 @@ fun PhotoEditorScreen(
 
     var imageSize by remember { mutableStateOf(IntSize(1, 1)) }
 
-    // PATCH: mostra la modale di editing job completato se richiesta
-    Log.d("DEBUG", "showJobEditModal: $showJobEditModal, jobToEdit: ${jobToEdit?.jobId}")
+    // bitmap effettivamente mostrata nel canvas
+    val bitmapToShow: Bitmap? = when {
+        state.isResultMode && state.bitmapResult != null -> state.bitmapResult
+        state.isBrushRemoveMode && state.bitmapInput != null -> state.bitmapInput
+        else -> state.bitmap
+    }
+
+    // funzione per salvare la bitmap su file temporaneo
+    fun saveBitmapToTempFile(context: Context, bitmap: Bitmap): File? {
+        return try {
+            val file = File(context.cacheDir, "share_image_${System.currentTimeMillis()}.png")
+            FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            file
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    // mostra la modale di editing job completato se richiesta
     if (showJobEditModal && jobToEdit != null) {
-        Log.d("DEBUG", "Sto mostrando la JobEditModal!")
-        // Usa JobEditModal dal file JobQueue3DPanel
         JobEditModal(
             job = jobToEdit!!,
             onApply = { newPrompt, newMask, newSteps ->
-                // Collega qui la logica per riapplicare il job
                 editorViewModel.reapplyJobWithEdit(context, jobToEdit!!, newPrompt, newMask, newSteps)
                 showJobEditModal = false
             },
             onSave = {
-                // Collega qui la logica di salvataggio risultato
                 editorViewModel.saveJobResultToGallery(context, jobToEdit!!)
                 showJobEditModal = false
             },
@@ -155,19 +161,15 @@ fun PhotoEditorScreen(
             onShowJob = { job ->
                 editorViewModel.loadJobResultAsCurrent(job)
                 editorViewModel.setCurrentJobId(job.jobId)
-                Log.d(TAG, "PhotoEditorScreen: onShowJob for jobId=${job.jobId}")
-                // PATCH: invece di caricare subito il risultato, apri la modale di editing
                 showJobEditModal = true
                 jobToEdit = job
                 showJobQueuePanel = false
             },
             onDeleteJob = { job ->
                 editorViewModel.deleteJob(context, job.jobId)
-                // PATCH: dopo una delete, aggiorna la lista dal DataStore
                 editorViewModel.loadPersistentJobs(context)
             },
             onPollJob = { job ->
-                Log.d(TAG, "PhotoEditorScreen: onPollJob for jobId=${job.jobId}")
                 editorViewModel.pollHuggingFaceJob(context, job.jobId)
             },
             onAddJob = { newJob ->
@@ -192,6 +194,12 @@ fun PhotoEditorScreen(
                 },
                 onRemoveObject = { editorViewModel.startSegmentPerson(context, removeBgOnly = true) },
                 onSave = { editorViewModel.save(context) },
+                onShare = {
+                    bitmapToShow?.let { bmp ->
+                        val file = saveBitmapToTempFile(context, bmp)
+                        onShare(file)
+                    }
+                },
                 onBrushRemove = {
                     editorViewModel.enableBrushRemove()
                 },
@@ -207,15 +215,11 @@ fun PhotoEditorScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             val compositeBitmap = state.compositeBitmap
-            val bitmapToShow = when {
-                state.isResultMode && state.bitmapResult != null -> state.bitmapResult
-                state.isBrushRemoveMode && state.bitmapInput != null -> state.bitmapInput
-                else -> state.bitmap
-            }
+            val showBitmap = bitmapToShow
 
-            if (state.showFilterScreen && bitmapToShow != null) {
+            if (state.showFilterScreen && showBitmap != null) {
                 PhotoFilterScreen(
-                    originalBitmap = bitmapToShow,
+                    originalBitmap = showBitmap,
                     onFilterApplied = { editorViewModel.onFilterApplied(it) },
                     onBack = { editorViewModel.onBackFromFilter() }
                 )
@@ -227,8 +231,6 @@ fun PhotoEditorScreen(
                         .fillMaxWidth(),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    Log.d("DEBUG", "bitmapResult: ${state.bitmapResult}, isResultMode: ${state.isResultMode}")
-
                     if (!state.isLoading && !state.isSegmenting) {
                         when {
                             compositeBitmap != null -> {
@@ -239,9 +241,9 @@ fun PhotoEditorScreen(
                                     imageSizeSetter = { imageSize = it }
                                 )
                             }
-                            bitmapToShow != null -> {
+                            showBitmap != null -> {
                                 BrushImageBox(
-                                    bitmap = bitmapToShow,
+                                    bitmap = showBitmap,
                                     state = state,
                                     editorViewModel = editorViewModel,
                                     imageSizeSetter = { imageSize = it }
@@ -260,7 +262,7 @@ fun PhotoEditorScreen(
                         CircularProgressIndicator(Modifier.align(Alignment.Center))
                     }
 
-                    if (state.isCropMode && bitmapToShow != null && imageSize.width > 0 && imageSize.height > 0) {
+                    if (state.isCropMode && showBitmap != null && imageSize.width > 0 && imageSize.height > 0) {
                         LaunchedEffect(imageSize) {
                             editorViewModel.updateBoxSize(imageSize)
                         }
@@ -279,7 +281,6 @@ fun PhotoEditorScreen(
                     }
                 }
 
-                // PATCH: Bottoni "Edit" e "Salva" sotto l'immagine, centrati
                 if (state.bitmapResult != null && state.isResultMode) {
                     LaunchedEffect(state.bitmapResult) {
                         if (jobToEdit == null) {
@@ -300,14 +301,10 @@ fun PhotoEditorScreen(
                                 colors = listOf(Color(0xFF36D1C4), Color(0xFF5B86E5))
                             ),
                             onClick = {
-                                Log.d("DEBUG_BUTTON", "Premuto Edit")
-                                // Recupera il job selezionato
                                 jobToEdit = state.inpaintJobs.find { it.jobId == state.currentJobId }
-                                Log.d("DEBUG_BUTTON", "jobToEdit = ${jobToEdit?.jobId}")
                                 if (jobToEdit != null) {
                                     showJobEditModal = true
                                 } else {
-                                    Log.d("DEBUG_BUTTON", "Nessun job selezionato per l'edit!")
                                     coroutineScope.launch {
                                         snackbarHostState.showSnackbar("Nessun job selezionato per l'edit!")
                                     }
@@ -325,16 +322,13 @@ fun PhotoEditorScreen(
                                 colors = listOf(Color(0xFFF7971E), Color(0xFFFFD200))
                             ),
                             onClick = {
-                                Log.d("DEBUG_BUTTON", "Premuto Salva")
                                 val job = state.inpaintJobs.find { it.jobId == state.currentJobId }
-                                Log.d("DEBUG_BUTTON", "job trovato tramite currentJobId (${state.currentJobId}): ${job?.jobId}")
                                 if (job != null) {
                                     editorViewModel.saveJobResultToGallery(context, job)
                                     coroutineScope.launch {
                                         snackbarHostState.showSnackbar("Immagine salvata in Galleria!")
                                     }
                                 } else {
-                                    Log.d("DEBUG_BUTTON", "Nessun job trovato per currentJobId = ${state.currentJobId}")
                                     coroutineScope.launch {
                                         snackbarHostState.showSnackbar("Errore: nessun job da salvare!")
                                     }
@@ -362,7 +356,7 @@ fun PhotoEditorScreen(
                 }
             }
 
-            if (state.showFilterScreen && bitmapToShow != null) {
+            if (state.showFilterScreen && showBitmap != null) {
                 Spacer(Modifier.height(16.dp))
             }
 

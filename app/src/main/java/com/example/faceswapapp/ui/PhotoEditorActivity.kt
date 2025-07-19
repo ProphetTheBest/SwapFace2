@@ -1,11 +1,16 @@
 package com.example.faceswapapp.ui
 
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.example.faceswapapp.viewmodel.PhotoEditorViewModel
 import androidx.activity.viewModels
+import java.io.File
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
 
 class PhotoEditorActivity : ComponentActivity() {
 
@@ -35,10 +40,30 @@ class PhotoEditorActivity : ComponentActivity() {
                 }
             }
 
+            val context = LocalContext.current
+
             PhotoEditorScreen(
                 imageUri = uriString?.let { Uri.parse(it) },
-                editorViewModel = editorViewModel
+                editorViewModel = editorViewModel,
+                onShare = { file ->
+                    file?.let { shareImage(context, it) }
+                }
             )
         }
+    }
+
+    // Funzione di condivisione immagini
+    private fun shareImage(context: Context, imageFile: File) {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.provider",
+            imageFile
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "Condividi con"))
     }
 }
